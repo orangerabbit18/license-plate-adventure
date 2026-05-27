@@ -165,6 +165,9 @@
       <button id="settings-close-btn" onclick="closeSettingsOverlay()" class="hidden mt-3 w-full py-2 text-slate-400 hover:text-white font-bold text-xs tracking-widest uppercase transition-colors">
         ✕ Cancel
       </button>
+      <button id="leave-session-btn" onclick="leaveSession()" class="hidden mt-1 w-full py-2 text-red-400 hover:text-red-300 font-bold text-xs tracking-widest uppercase transition-colors">
+        ↩ Leave Session
+      </button>
 
     </div>
 
@@ -282,7 +285,29 @@
         select.innerHTML = '<option value="">Could not load sessions</option>';
       }
     }
-    loadSessions();
+    // On page load: try to restore a previously saved session, otherwise show login
+    async function autoLogin() {
+      const savedId = localStorage.getItem('lpa_session_id');
+      if (!savedId) return false;
+      const { data, error } = await db.from('sessions').select('*').eq('id', savedId).single();
+      if (error || !data) {
+        localStorage.removeItem('lpa_session_id');
+        return false;
+      }
+      await enterSession(data);
+      return true;
+    }
+
+    function leaveSession() {
+      if (!confirm('Leave this session? You can rejoin anytime with the passphrase.')) return;
+      localStorage.removeItem('lpa_session_id');
+      location.reload();
+    }
+
+    (async () => {
+      const loggedIn = await autoLogin();
+      if (!loggedIn) loadSessions();
+    })();
 
     // Toggle between Join and New Session modes
     function setLoginMode(mode) {
@@ -335,6 +360,7 @@
       currentSessionId   = sessionData.id;
       currentSessionData = sessionData;
       sessionActive      = true;
+      localStorage.setItem('lpa_session_id', sessionData.id);
       document.getElementById('session-display-name').innerText = `Session: ${sessionData.session_name}`;
       updateDateDisplay();
       calculatePointsMatrix();
@@ -866,8 +892,9 @@
       document.getElementById('setup-btn').innerText      = 'Save Changes';
       document.getElementById('setup-btn').setAttribute('onclick', 'saveSessionSettings()');
 
-      // Show cancel button, open overlay
+      // Show cancel + leave buttons, open overlay
       document.getElementById('settings-close-btn').classList.remove('hidden');
+      document.getElementById('leave-session-btn').classList.remove('hidden');
       document.getElementById('setup-screen').style.transform = 'translateY(0)';
     }
 
@@ -905,6 +932,7 @@
       document.getElementById('setup-screen').style.transform = 'translateY(100%)';
       document.getElementById('mode-toggle').classList.remove('hidden');
       document.getElementById('settings-close-btn').classList.add('hidden');
+      document.getElementById('leave-session-btn').classList.add('hidden');
       // Reset form button back to create-session mode
       document.getElementById('setup-title').innerText    = 'License Plate Adventure!';
       document.getElementById('setup-subtitle').innerText = 'Set up your road trip session to calculate distance points';
