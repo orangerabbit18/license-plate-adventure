@@ -1,0 +1,1315 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>License Plate Adventure! - Plate Spotter & Fact Finder</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛣️</text></svg>">
+  <!-- Tailwind CSS Version 3 CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Beautiful Google Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    /* Custom CSS to elevate aesthetics and ensure butter-smooth transitions */
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    /* Smooth drawer expansion transition */
+    .drawer-transition {
+      transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease-out;
+    }
+    
+    /* locked shaking animation (door wiggle analogy) */
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-6px); }
+      75% { transform: translateX(6px); }
+    }
+    .shake-card {
+      animation: shake 0.2s ease-in-out 0s 2;
+    }
+
+    /* Custom scrollbar for native app feel */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.02);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.12);
+      border-radius: 10px;
+    }
+
+    /* ── DARK MODE ── */
+    html.dark body { background-color: #020617; color: #e2e8f0; }
+
+    /* device frame */
+    html.dark .bg-slate-50 { background-color: #0f172a !important; }
+
+    /* state cards */
+    html.dark .state-card { background-color: #1e293b; border-color: #334155; }
+    html.dark .state-card h2 { color: #f1f5f9; }
+    html.dark .state-card .status-teaser { color: #94a3b8; }
+
+    /* spot-plate button box */
+    html.dark .state-card > div > div.flex.items-center.bg-slate-50 {
+      background-color: #334155 !important;
+      border-color: #475569 !important;
+    }
+    html.dark .state-card label { color: #cbd5e1; }
+
+    /* drawer interior */
+    html.dark .drawer-container { border-color: #334155; }
+    html.dark .drawer-container .border-t { border-color: #334155; }
+
+    /* fact panels */
+    html.dark .fact-panel { background-color: rgba(30,41,59,0.8) !important; border-color: #334155 !important; }
+    html.dark .fact-panel:hover { background-color: rgba(51,65,85,0.8) !important; }
+    html.dark .fact-panel h4 { color: #f1f5f9; }
+    html.dark .fact-panel > div > div > p { color: #94a3b8; }
+
+    /* sub-drawer story text box */
+    html.dark .sub-drawer .bg-white\/70 { background-color: rgba(2,6,23,0.6) !important; border-color: #334155 !important; }
+    html.dark .sub-drawer p { color: #94a3b8; }
+    html.dark .sub-drawer .border-t { border-color: #334155; }
+
+    /* search bar */
+    html.dark #search-input { background-color: rgba(2,6,23,0.7) !important; border-color: #334155; }
+
+    /* dark mode toggle button */
+    #dark-toggle { transition: transform 0.3s ease; }
+    #dark-toggle:hover { transform: rotate(20deg); }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans antialiased m-0 p-0 min-h-screen">
+
+  <!-- 
+    Desktop Device Frame Wrapper (Standard Block Layout)
+    Centered using margin block methods. On desktop it frames the app like a real smartphone;
+    on actual mobile view it fills 100% of the screen.
+  -->
+  <div class="block mx-auto my-0 sm:my-8 max-w-md w-full bg-slate-50 sm:rounded-[40px] sm:shadow-2xl sm:border-[12px] sm:border-slate-900 min-h-screen sm:min-h-[850px] relative overflow-hidden">
+    
+    <!-- 
+      SESSION SETUP SCREEN OVERLAY (Departures Gate Analogy)
+      Houses session creation fields. Slides out of view once a session is successfully initialized.
+    -->
+    <div id="setup-screen" class="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 text-white z-50 flex flex-col justify-center px-6 transition-all duration-500 ease-in-out transform translate-y-0">
+      
+      <!-- West → East road trip emoji banner (top) -->
+      <div class="text-center text-xl mb-5 tracking-widest select-none" title="West Coast → East Coast">
+        🌊🌴🎬🏔️🌵🤠🎸🌽🏛️🗽🌊
+      </div>
+
+      <div class="text-center mb-6">
+        <h2 id="setup-title" class="text-3xl font-black mt-3 tracking-tight bg-gradient-to-r from-amber-400 to-amber-500 bg-clip-text text-transparent">License Plate Adventure!</h2>
+        <p id="setup-subtitle" class="text-xs text-slate-400 mt-1 font-medium">Set up your road trip session to calculate distance points</p>
+      </div>
+      
+      <!-- Mode Toggle: Join / New -->
+      <div id="mode-toggle" class="flex gap-1 bg-slate-950/70 p-1 rounded-xl mb-4 shadow-inner">
+        <button onclick="setLoginMode('join')" id="mode-join-btn" class="w-1/2 py-2 text-xs font-bold rounded-lg transition-all bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md">
+          Join Session
+        </button>
+        <button onclick="setLoginMode('create')" id="mode-create-btn" class="w-1/2 py-2 text-xs font-bold rounded-lg transition-all text-slate-400 hover:text-slate-200">
+          New Session
+        </button>
+      </div>
+
+      <!-- JOIN EXISTING SESSION -->
+      <div id="join-fields" class="space-y-4 bg-slate-950/40 p-5 rounded-3xl border border-slate-800/80 shadow-2xl backdrop-blur-md">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Select Your Session</label>
+          <select id="session-select" class="w-full bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 cursor-pointer font-bold">
+            <option value="">Loading sessions...</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Team Passphrase</label>
+          <input type="password" id="join-passphrase" placeholder="••••••••" class="w-full bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all">
+        </div>
+        <button id="join-btn" onclick="joinSession()" class="w-full mt-2 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs tracking-widest rounded-xl shadow-lg transition-all hover:scale-[1.02] uppercase">
+          Join Adventure!
+        </button>
+      </div>
+
+      <!-- CREATE NEW SESSION -->
+      <div id="create-fields" class="hidden space-y-4 bg-slate-950/40 p-5 rounded-3xl border border-slate-800/80 shadow-2xl backdrop-blur-md">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Session Name</label>
+          <input type="text" id="setup-session-name" placeholder="e.g., Summer Road Trip 2026" class="w-full bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all font-semibold">
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Trip Date Range</label>
+          <div class="flex gap-2">
+            <input type="date" id="setup-start-date" class="w-1/2 bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-[10px] text-white focus:outline-none focus:border-amber-500 transition-all font-semibold">
+            <input type="date" id="setup-end-date" class="w-1/2 bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-[10px] text-white focus:outline-none focus:border-amber-500 transition-all font-semibold">
+          </div>
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Team Passphrase</label>
+          <input type="password" id="setup-passphrase" placeholder="••••••••" class="w-full bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all">
+        </div>
+        <button id="setup-btn" onclick="initializeSession()" class="w-full mt-2 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs tracking-widest rounded-xl shadow-lg transition-all hover:scale-[1.02] uppercase">
+          Start New Adventure!
+        </button>
+      </div>
+
+      <!-- West → East road trip emoji banner (bottom) -->
+      <div class="text-center text-xl mt-5 tracking-widest select-none" title="West Coast → East Coast">
+        🌊🌴🎬🏔️🌵🤠🎸🌽🏛️🗽🌊
+      </div>
+
+      <button id="settings-close-btn" onclick="closeSettingsOverlay()" class="hidden mt-3 w-full py-2 text-slate-400 hover:text-white font-bold text-xs tracking-widest uppercase transition-colors">
+        ✕ Cancel
+      </button>
+
+    </div>
+
+    <!-- STICKY HEADER SYSTEM (Pins to the top of the mobile screen) -->
+    <div class="sticky top-0 z-40 w-full backdrop-blur-lg bg-slate-900/95 text-white shadow-md">
+      
+      <!-- Live Session Metadata Status Bar -->
+      <div class="px-5 py-2.5 bg-slate-950 border-b border-slate-800/60 text-[9px] font-black tracking-widest text-slate-400 uppercase flex justify-between items-center select-none">
+        <div class="flex items-center gap-1.5 shrink-0 max-w-[65%]">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+          <span id="session-display-name" class="truncate text-slate-300">Session: Summer Road Trip</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="session-display-dates" class="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-black">—</span>
+          <!-- Dark mode toggle -->
+          <button id="dark-toggle" onclick="toggleDarkMode()" class="text-slate-400 hover:text-white transition-all shrink-0" title="Toggle dark/light mode">
+            <svg id="icon-moon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path>
+            </svg>
+            <svg id="icon-sun" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 3v1m0 16v1m8.66-9h-1M4.34 12h-1m15.07-6.07-.71.71M5.64 18.36l-.71.71m12.02 0-.71-.71M5.64 5.64l-.71-.71M12 7a5 5 0 100 10A5 5 0 0012 7z"></path>
+            </svg>
+          </button>
+          <!-- Settings gear icon to edit session -->
+          <button onclick="openSessionSettings()" class="text-slate-400 hover:text-white transition-all shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      
+      <!-- Top Summary Banner (Collective Team Points) -->
+      <div class="px-5 pt-4 pb-3">
+        <div class="flex justify-between items-center mb-2 select-none">
+          <div>
+            <span class="text-[9px] font-black tracking-widest text-amber-400 uppercase">COLLECTIVE SCORE</span>
+            <h1 class="text-2xl font-extrabold tracking-tight mt-0.5 flex items-baseline">
+              <span id="team-points-display" class="text-3xl text-amber-500 font-black transition-all duration-300">0</span>
+              <span class="text-sm font-semibold text-slate-400 ml-1">pts</span>
+            </h1>
+          </div>
+          <div class="text-right">
+            <span class="text-[9px] font-black tracking-widest text-emerald-400 uppercase">PLATES SPOTTED</span>
+            <p id="progress-text-display" class="text-sm font-bold text-slate-200 mt-0.5">0 of 5 Spotted</p>
+          </div>
+        </div>
+        
+        <!-- Linear Progress Bar -->
+        <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden shadow-inner border border-slate-700/50">
+          <div id="progress-bar-fill" class="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full transition-all duration-700 ease-out" style="width: 0%;"></div>
+        </div>
+      </div>
+      
+      <!-- Search Box & Filter Toggle Button Group -->
+      <div class="px-5 pb-4 pt-1 bg-slate-900/40">
+        <!-- Search Input -->
+        <div class="relative w-full mb-3">
+          <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </span>
+          <input type="text" id="search-input" oninput="applyFilters()" placeholder="Search road trip states..." class="w-full pl-9 pr-4 py-2.5 bg-slate-950/60 border border-slate-800 text-sm rounded-xl placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-white transition-all">
+        </div>
+        
+        <!-- Horizontal Toggle Group -->
+        <div class="bg-slate-950/70 p-1 rounded-xl flex gap-1 justify-between shadow-inner">
+          <button onclick="changeFilter(this, 'all')" class="filter-btn active w-1/3 py-2 text-xs font-bold rounded-lg transition-all text-center bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow-md" data-filter="all">
+            All States
+          </button>
+          <button onclick="changeFilter(this, 'unspotted')" class="filter-btn w-1/3 py-2 text-xs font-bold rounded-lg transition-all text-center text-slate-400 hover:text-slate-200" data-filter="unspotted">
+            Unspotted
+          </button>
+          <button onclick="changeFilter(this, 'spotted')" class="filter-btn w-1/3 py-2 text-xs font-bold rounded-lg transition-all text-center text-slate-400 hover:text-slate-200" data-filter="spotted">
+            Spotted
+          </button>
+        </div>
+      </div>
+      
+    </div>
+
+    <!-- SCROLLABLE LIST CONTENT AREA -->
+    <div id="states-container" class="px-4 py-5 overflow-y-auto" style="height: calc(100vh - 250px); min-height: 550px;">
+      <!-- Cards injected by renderStateCards() -->
+
+    </div>
+    
+  </div>
+
+  <!-- INTERACTIVE LOGIC & SCORING ENGINE -->
+  <script>
+    
+    // --- SUPABASE CLIENT ---
+    const db = window.supabase.createClient(
+      'https://kaqkycvzivfcytiqxeay.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImthcWt5Y3Z6aXZmY3l0aXF4ZWF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3Mzc1OTEsImV4cCI6MjA5NTMxMzU5MX0.2HAvvTpf9VsRHBzqFen1iIVRJDmSgqX83LhR6GCdCtU'
+    );
+
+    let currentSessionId   = null;
+    let currentSessionData = null;
+
+    // Load existing sessions into the join dropdown on page load
+    async function loadSessions() {
+      const select = document.getElementById('session-select');
+      try {
+        const { data, error } = await db.from('sessions').select('id, session_name').order('created_at', { ascending: false });
+        if (error || !data || data.length === 0) {
+          select.innerHTML = '<option value="">No sessions yet — create one!</option>';
+          return;
+        }
+        select.innerHTML = data.map(s => `<option value="${s.id}">${s.session_name}</option>`).join('');
+      } catch (e) {
+        select.innerHTML = '<option value="">Could not load sessions</option>';
+      }
+    }
+    loadSessions();
+
+    // Toggle between Join and New Session modes
+    function setLoginMode(mode) {
+      const joinFields = document.getElementById('join-fields');
+      const createFields = document.getElementById('create-fields');
+      const joinBtn = document.getElementById('mode-join-btn');
+      const createBtn = document.getElementById('mode-create-btn');
+      const activeClasses = ['bg-gradient-to-r', 'from-amber-500', 'to-amber-600', 'text-slate-950', 'shadow-md'];
+      const inactiveClasses = ['text-slate-400', 'hover:text-slate-200'];
+      if (mode === 'join') {
+        joinFields.classList.remove('hidden');
+        createFields.classList.add('hidden');
+        joinBtn.classList.add(...activeClasses);
+        joinBtn.classList.remove(...inactiveClasses);
+        createBtn.classList.remove(...activeClasses);
+        createBtn.classList.add(...inactiveClasses);
+      } else {
+        createFields.classList.remove('hidden');
+        joinFields.classList.add('hidden');
+        createBtn.classList.add(...activeClasses);
+        createBtn.classList.remove(...inactiveClasses);
+        joinBtn.classList.remove(...activeClasses);
+        joinBtn.classList.add(...inactiveClasses);
+      }
+    }
+
+    // Join an existing session
+    async function joinSession() {
+      const sessionId = document.getElementById('session-select').value;
+      const passphrase = document.getElementById('join-passphrase').value;
+      if (!sessionId || !passphrase) {
+        alert('Please select a session and enter the passphrase.');
+        return;
+      }
+      const btn = document.getElementById('join-btn');
+      btn.innerText = 'Joining...';
+      btn.disabled = true;
+      const { data, error } = await db.from('sessions').select('*').eq('id', sessionId).eq('passphrase', passphrase).single();
+      if (error || !data) {
+        alert('Incorrect passphrase! Check with whoever created the session.');
+        btn.innerText = 'Join Adventure!';
+        btn.disabled = false;
+        return;
+      }
+      await enterSession(data);
+    }
+
+    // Shared entry point after login or join
+    async function enterSession(sessionData) {
+      currentSessionId   = sessionData.id;
+      currentSessionData = sessionData;
+      sessionActive      = true;
+      document.getElementById('session-display-name').innerText = `Session: ${sessionData.session_name}`;
+      updateDateDisplay();
+      calculatePointsMatrix();
+      await loadSpottedPlates(sessionData.id);
+      subscribeToPlates(sessionData.id);
+      document.getElementById('setup-screen').style.transform = 'translateY(100%)';
+    }
+
+    // Format and render the trip date range in the header chip
+    function updateDateDisplay() {
+      if (!currentSessionData?.start_date) return;
+      const fmt = str => new Date(str + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      document.getElementById('session-display-dates').innerText =
+        `${fmt(currentSessionData.start_date)} – ${fmt(currentSessionData.end_date)}`;
+    }
+
+    // Load plates already spotted by any family member
+    async function loadSpottedPlates(sessionId) {
+      const { data, error } = await db.from('spotted_plates').select('state_key').eq('session_id', sessionId);
+      if (error || !data) return;
+      data.forEach(({ state_key }) => {
+        const checkbox = document.getElementById(`check-${state_key}`);
+        if (checkbox && !checkbox.checked) {
+          checkbox.checked = true;
+          toggleLicensePlate(state_key, true);
+        }
+      });
+    }
+
+    // Real-time subscription — updates all connected phones instantly
+    function subscribeToPlates(sessionId) {
+      db.channel(`plates-${sessionId}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'spotted_plates', filter: `session_id=eq.${sessionId}` }, (payload) => {
+          const checkbox = document.getElementById(`check-${payload.new.state_key}`);
+          if (checkbox && !checkbox.checked) {
+            checkbox.checked = true;
+            toggleLicensePlate(payload.new.state_key, true);
+          }
+        })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'spotted_plates', filter: `session_id=eq.${sessionId}` }, (payload) => {
+          const checkbox = document.getElementById(`check-${payload.old.state_key}`);
+          if (checkbox && checkbox.checked) {
+            checkbox.checked = false;
+            toggleLicensePlate(payload.old.state_key, true);
+          }
+        })
+        .subscribe();
+    }
+
+
+    // --- DARK MODE ---
+    function toggleDarkMode() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('darkMode', isDark ? '1' : '0');
+      document.getElementById('icon-moon').classList.toggle('hidden', isDark);
+      document.getElementById('icon-sun').classList.toggle('hidden', !isDark);
+    }
+
+    // Restore preference on load
+    if (localStorage.getItem('darkMode') === '1') {
+      document.documentElement.classList.add('dark');
+      document.getElementById('icon-moon').classList.add('hidden');
+      document.getElementById('icon-sun').classList.remove('hidden');
+    }
+
+    // --- STATIC STATE METADATA (GPS coordinates & Population Scarcity Base) ---
+    const stateData = {
+      massachusetts: {
+        name: "Massachusetts",
+        lat: 42.4072,
+        lon: -71.3824,
+        pop: 7000000,
+        currentScore: 0
+      },
+      california: {
+        name: "California",
+        lat: 36.7783,
+        lon: -119.4179,
+        pop: 39000000,
+        currentScore: 0
+      },
+      texas: {
+        name: "Texas",
+        lat: 31.9686,
+        lon: -99.9018,
+        pop: 30000000,
+        currentScore: 0
+      },
+      arizona: {
+        name: "Arizona",
+        lat: 34.0489,
+        lon: -111.0937,
+        pop: 7400000,
+        currentScore: 0
+      },
+      louisiana: {
+        name: "Louisiana",
+        lat: 31.2448,
+        lon: -92.1450,
+        pop: 4600000,
+        currentScore: 0
+      },
+      florida: {
+        name: "Florida",
+        lat: 27.6648,
+        lon: -81.5158,
+        pop: 22600000,
+        currentScore: 0
+      },
+      alabama: {
+        name: "Alabama",
+        lat: 32.7794,
+        lon: -86.8287,
+        pop: 5074296,
+        currentScore: 0
+      },
+      alaska: {
+        name: "Alaska",
+        lat: 64.2008,
+        lon: -153.4937,
+        pop: 733583,
+        currentScore: 0
+      },
+      arkansas: {
+        name: "Arkansas",
+        lat: 34.9697,
+        lon: -92.3731,
+        pop: 3045637,
+        currentScore: 0
+      },
+      colorado: {
+        name: "Colorado",
+        lat: 39.0646,
+        lon: -105.3272,
+        pop: 5877610,
+        currentScore: 0
+      },
+      connecticut: {
+        name: "Connecticut",
+        lat: 41.6219,
+        lon: -72.7273,
+        pop: 3626205,
+        currentScore: 0
+      },
+      delaware: {
+        name: "Delaware",
+        lat: 38.9896,
+        lon: -75.5050,
+        pop: 1018396,
+        currentScore: 0
+      },
+      georgia: {
+        name: "Georgia",
+        lat: 32.3293,
+        lon: -83.1137,
+        pop: 10912876,
+        currentScore: 0
+      },
+      hawaii: {
+        name: "Hawaii",
+        lat: 19.5429,
+        lon: -155.6659,
+        pop: 1440196,
+        currentScore: 0
+      },
+      idaho: {
+        name: "Idaho",
+        lat: 44.2394,
+        lon: -114.5103,
+        pop: 1939033,
+        currentScore: 0
+      },
+      illinois: {
+        name: "Illinois",
+        lat: 40.0417,
+        lon: -89.1965,
+        pop: 12582032,
+        currentScore: 0
+      },
+      indiana: {
+        name: "Indiana",
+        lat: 39.8942,
+        lon: -86.2816,
+        pop: 6833037,
+        currentScore: 0
+      },
+      iowa: {
+        name: "Iowa",
+        lat: 42.0751,
+        lon: -93.4960,
+        pop: 3200517,
+        currentScore: 0
+      },
+      kansas: {
+        name: "Kansas",
+        lat: 38.4937,
+        lon: -98.3804,
+        pop: 2937880,
+        currentScore: 0
+      },
+      kentucky: {
+        name: "Kentucky",
+        lat: 37.5347,
+        lon: -85.3021,
+        pop: 4526154,
+        currentScore: 0
+      },
+      maine: {
+        name: "Maine",
+        lat: 44.6074,
+        lon: -69.3977,
+        pop: 1385340,
+        currentScore: 0
+      },
+      maryland: {
+        name: "Maryland",
+        lat: 39.0550,
+        lon: -76.7909,
+        pop: 6177224,
+        currentScore: 0
+      },
+      michigan: {
+        name: "Michigan",
+        lat: 43.3504,
+        lon: -84.5603,
+        pop: 10034113,
+        currentScore: 0
+      },
+      minnesota: {
+        name: "Minnesota",
+        lat: 46.2807,
+        lon: -94.3053,
+        pop: 5717184,
+        currentScore: 0
+      },
+      mississippi: {
+        name: "Mississippi",
+        lat: 32.7364,
+        lon: -89.6678,
+        pop: 2940057,
+        currentScore: 0
+      },
+      missouri: {
+        name: "Missouri",
+        lat: 38.3566,
+        lon: -92.4580,
+        pop: 6177957,
+        currentScore: 0
+      },
+      montana: {
+        name: "Montana",
+        lat: 46.8797,
+        lon: -110.3626,
+        pop: 1122867,
+        currentScore: 0
+      },
+      nebraska: {
+        name: "Nebraska",
+        lat: 41.4925,
+        lon: -99.9018,
+        pop: 1967923,
+        currentScore: 0
+      },
+      nevada: {
+        name: "Nevada",
+        lat: 39.3289,
+        lon: -116.6312,
+        pop: 3177772,
+        currentScore: 0
+      },
+      newHampshire: {
+        name: "New Hampshire",
+        lat: 43.6805,
+        lon: -71.5811,
+        pop: 1395231,
+        currentScore: 0
+      },
+      newJersey: {
+        name: "New Jersey",
+        lat: 40.1907,
+        lon: -74.6728,
+        pop: 9261699,
+        currentScore: 0
+      },
+      newMexico: {
+        name: "New Mexico",
+        lat: 34.4071,
+        lon: -106.1126,
+        pop: 2113344,
+        currentScore: 0
+      },
+      newYork: {
+        name: "New York",
+        lat: 42.9538,
+        lon: -75.5268,
+        pop: 19677151,
+        currentScore: 0
+      },
+      northCarolina: {
+        name: "North Carolina",
+        lat: 35.5557,
+        lon: -79.3877,
+        pop: 10698973,
+        currentScore: 0
+      },
+      northDakota: {
+        name: "North Dakota",
+        lat: 47.4501,
+        lon: -100.4659,
+        pop: 779261,
+        currentScore: 0
+      },
+      ohio: {
+        name: "Ohio",
+        lat: 40.2862,
+        lon: -82.7937,
+        pop: 11799448,
+        currentScore: 0
+      },
+      oklahoma: {
+        name: "Oklahoma",
+        lat: 35.5889,
+        lon: -97.4943,
+        pop: 4019800,
+        currentScore: 0
+      },
+      oregon: {
+        name: "Oregon",
+        lat: 43.9336,
+        lon: -120.5583,
+        pop: 4240137,
+        currentScore: 0
+      },
+      pennsylvania: {
+        name: "Pennsylvania",
+        lat: 40.8781,
+        lon: -77.7996,
+        pop: 13002700,
+        currentScore: 0
+      },
+      rhodeIsland: {
+        name: "Rhode Island",
+        lat: 41.6762,
+        lon: -71.5562,
+        pop: 1093734,
+        currentScore: 0
+      },
+      southCarolina: {
+        name: "South Carolina",
+        lat: 33.8191,
+        lon: -80.9066,
+        pop: 5282634,
+        currentScore: 0
+      },
+      southDakota: {
+        name: "South Dakota",
+        lat: 44.2998,
+        lon: -99.4388,
+        pop: 909824,
+        currentScore: 0
+      },
+      tennessee: {
+        name: "Tennessee",
+        lat: 35.7478,
+        lon: -86.6923,
+        pop: 7051339,
+        currentScore: 0
+      },
+      utah: {
+        name: "Utah",
+        lat: 39.3210,
+        lon: -111.0937,
+        pop: 3380800,
+        currentScore: 0
+      },
+      vermont: {
+        name: "Vermont",
+        lat: 44.0687,
+        lon: -72.6658,
+        pop: 647464,
+        currentScore: 0
+      },
+      virginia: {
+        name: "Virginia",
+        lat: 37.7693,
+        lon: -78.1700,
+        pop: 8683619,
+        currentScore: 0
+      },
+      washington: {
+        name: "Washington",
+        lat: 47.4009,
+        lon: -121.4905,
+        pop: 7785786,
+        currentScore: 0
+      },
+      westVirginia: {
+        name: "West Virginia",
+        lat: 38.4680,
+        lon: -80.9696,
+        pop: 1775156,
+        currentScore: 0
+      },
+      wisconsin: {
+        name: "Wisconsin",
+        lat: 44.2685,
+        lon: -89.6165,
+        pop: 5893718,
+        currentScore: 0
+      },
+      wyoming: {
+        name: "Wyoming",
+        lat: 42.9957,
+        lon: -107.5512,
+        pop: 581381,
+        currentScore: 0
+      }
+    };
+
+    let sessionActive = false;
+    let currentOrigin = "massachusetts";
+
+    // --- MATHEMATICAL DYNAMIC ENGINE (Shipping Cost & Scarcity Analogies) ---
+    
+    // Haversine Distance Equation (Miles between coordinates)
+    function getHaversineDistance(lat1, lon1, lat2, lon2) {
+      const R = 3958.8; // Earth radius in miles
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    // Dynamic Math Orchestration — normalized to 1000 pts total, always from Massachusetts
+    function calculatePointsMatrix() {
+      const MA = stateData['massachusetts'];
+
+      // Step 1: Raw score per state — further + smaller population = higher
+      const rawScores = {};
+      for (const [key, state] of Object.entries(stateData)) {
+        const distanceMiles = getHaversineDistance(MA.lat, MA.lon, state.lat, state.lon);
+        const distanceScore  = distanceMiles * 0.2;
+        const scarcityScore  = Math.log(39000000 / state.pop) * 100;
+        rawScores[key] = (0.65 * distanceScore) + (0.35 * scarcityScore);
+      }
+
+      // Step 2: Scale so the sum of all 50 states equals exactly 1000 pts
+      const totalRaw = Object.values(rawScores).reduce((s, v) => s + v, 0);
+      const scale    = 1000 / totalRaw;
+
+      // Step 3: Round to integers, absorb any rounding delta on the top state
+      let runningTotal = 0;
+      for (const [key, raw] of Object.entries(rawScores)) {
+        stateData[key].currentScore = Math.max(1, Math.round(raw * scale));
+        runningTotal += stateData[key].currentScore;
+      }
+      const delta = 1000 - runningTotal;
+      if (delta !== 0) {
+        const topKey = Object.keys(rawScores).reduce((a, b) => rawScores[a] > rawScores[b] ? a : b);
+        stateData[topKey].currentScore += delta;
+      }
+
+      // Step 4: Push scores to DOM badges
+      // Avg is always 20 pts (1000 / 50); pulse anything 1.5× above average
+      const PULSE_THRESHOLD = 30;
+      for (const [key, state] of Object.entries(stateData)) {
+        const card = document.getElementById(`card-${key}`);
+        if (!card) continue;
+        const badge = card.querySelector('.points-badge');
+        if (!badge) continue;
+        badge.innerText = `+${state.currentScore} pts`;
+        badge.className = state.currentScore >= PULSE_THRESHOLD
+          ? "points-badge px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-500 text-slate-950 border border-amber-400 shadow-sm shrink-0 animate-pulse"
+          : "points-badge px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 shrink-0";
+      }
+
+      recalculateGlobalScore();
+    }
+
+    // --- SESSION INITIALIZATION & TRANSITIONS ---
+
+    async function initializeSession() {
+      const sessionName = document.getElementById('setup-session-name').value.trim();
+      const startDate = document.getElementById('setup-start-date').value;
+      const endDate = document.getElementById('setup-end-date').value;
+      const passphrase = document.getElementById('setup-passphrase').value;
+      if (!sessionName || !startDate || !endDate || !passphrase) {
+        alert("Please fill in all fields before launching your adventure!");
+        return;
+      }
+      const btn = document.getElementById('setup-btn');
+      btn.innerText = 'Creating...';
+      btn.disabled = true;
+      const { data, error } = await db.from('sessions').insert({
+        session_name: sessionName,
+        passphrase: passphrase,
+        origin_state: 'massachusetts',
+        start_date: startDate,
+        end_date: endDate
+      }).select().single();
+      if (error) {
+        alert("Couldn't create session. Please try again.");
+        btn.innerText = 'Start New Adventure!';
+        btn.disabled = false;
+        return;
+      }
+      await enterSession(data);
+    }
+
+    function openSessionSettings() {
+      if (!currentSessionData) return;
+
+      // Switch to create-fields view and hide the join/create toggle
+      setLoginMode('create');
+      document.getElementById('mode-toggle').classList.add('hidden');
+
+      // Pre-fill with current session values
+      document.getElementById('setup-session-name').value = currentSessionData.session_name || '';
+      document.getElementById('setup-start-date').value   = currentSessionData.start_date   || '';
+      document.getElementById('setup-end-date').value     = currentSessionData.end_date     || '';
+      document.getElementById('setup-passphrase').value   = '';
+
+      // Update labels
+      document.getElementById('setup-title').innerText    = 'Session Settings';
+      document.getElementById('setup-subtitle').innerText = 'Edit your trip details below';
+      document.getElementById('setup-btn').innerText      = 'Save Changes';
+      document.getElementById('setup-btn').setAttribute('onclick', 'saveSessionSettings()');
+
+      // Show cancel button, open overlay
+      document.getElementById('settings-close-btn').classList.remove('hidden');
+      document.getElementById('setup-screen').style.transform = 'translateY(0)';
+    }
+
+    async function saveSessionSettings() {
+      const sessionName = document.getElementById('setup-session-name').value.trim();
+      const startDate   = document.getElementById('setup-start-date').value;
+      const endDate     = document.getElementById('setup-end-date').value;
+      if (!sessionName || !startDate || !endDate) {
+        alert('Please fill in session name and dates.');
+        return;
+      }
+      const btn = document.getElementById('setup-btn');
+      btn.innerText = 'Saving...';
+      btn.disabled  = true;
+      const { error } = await db.from('sessions').update({
+        session_name: sessionName,
+        start_date:   startDate,
+        end_date:     endDate
+      }).eq('id', currentSessionId);
+      if (error) {
+        alert("Couldn't save changes. Please try again.");
+        btn.innerText = 'Save Changes';
+        btn.disabled  = false;
+        return;
+      }
+      currentSessionData.session_name = sessionName;
+      currentSessionData.start_date   = startDate;
+      currentSessionData.end_date     = endDate;
+      document.getElementById('session-display-name').innerText = `Session: ${sessionName}`;
+      updateDateDisplay();
+      closeSettingsOverlay();
+    }
+
+    function closeSettingsOverlay() {
+      document.getElementById('setup-screen').style.transform = 'translateY(100%)';
+      document.getElementById('mode-toggle').classList.remove('hidden');
+      document.getElementById('settings-close-btn').classList.add('hidden');
+      // Reset form button back to create-session mode
+      document.getElementById('setup-title').innerText    = 'License Plate Adventure!';
+      document.getElementById('setup-subtitle').innerText = 'Set up your road trip session to calculate distance points';
+      document.getElementById('setup-btn').innerText      = 'Start New Adventure!';
+      document.getElementById('setup-btn').setAttribute('onclick', 'initializeSession()');
+      document.getElementById('setup-btn').disabled = false;
+    }
+
+    // --- MAIN INTERACTION SCRIPT ---
+
+    // 1. STATE DRAWER EXPAND / COLLAPSE
+    function toggleCardDrawer(stateId) {
+      const card = document.getElementById(`card-${stateId}`);
+      const isSpotted = card.getAttribute('data-spotted') === 'true';
+      const drawer = card.querySelector('.drawer-container');
+      
+      // Lock Wiggle feedback if unspotted
+      if (!isSpotted) {
+        card.classList.add('shake-card');
+        if (navigator.vibrate) navigator.vibrate(80); 
+        
+        setTimeout(() => {
+          card.classList.remove('shake-card');
+        }, 400);
+        return;
+      }
+      
+      // Accordion: close others
+      document.querySelectorAll('.state-card').forEach(otherCard => {
+        if (otherCard !== card) {
+          const otherDrawer = otherCard.querySelector('.drawer-container');
+          otherDrawer.style.maxHeight = null;
+          otherDrawer.classList.add('opacity-0');
+        }
+      });
+      
+      // Toggle current
+      if (drawer.style.maxHeight) {
+        drawer.style.maxHeight = null;
+        drawer.classList.add('opacity-0');
+      } else {
+        drawer.style.maxHeight = "1200px";
+        drawer.classList.remove('opacity-0');
+      }
+    }
+
+    // 2. NESTED SUB-DRAWER TOGGLE
+    function toggleSubDrawer(stateId, categoryIndex) {
+      const card = document.getElementById(`card-${stateId}`);
+      const panels = card.querySelectorAll('.fact-panel');
+      const targetPanel = panels[categoryIndex];
+      const subDrawer = targetPanel.querySelector('.sub-drawer');
+      const subChevron = targetPanel.querySelector('.sub-chevron');
+      const mainDrawer = card.querySelector('.drawer-container');
+      
+      panels.forEach((panel, idx) => {
+        if (idx !== categoryIndex) {
+          const otherSub = panel.querySelector('.sub-drawer');
+          const otherChevron = panel.querySelector('.sub-chevron');
+          otherSub.style.maxHeight = null;
+          otherSub.classList.add('opacity-0');
+          otherChevron.classList.remove('rotate-180');
+        }
+      });
+      
+      if (subDrawer.style.maxHeight) {
+        subDrawer.style.maxHeight = null;
+        subDrawer.classList.add('opacity-0');
+        subChevron.classList.remove('rotate-180');
+      } else {
+        subDrawer.style.maxHeight = "300px";
+        subDrawer.classList.remove('opacity-0');
+        subChevron.classList.add('rotate-180');
+        mainDrawer.style.maxHeight = "1500px"; // prevent clipping
+      }
+    }
+
+    // 3. PLATE SPOTTING TOGGLE ACTION
+    function toggleLicensePlate(stateId, fromDB = false) {
+      const card = document.getElementById(`card-${stateId}`);
+      const checkbox = document.getElementById(`check-${stateId}`);
+      const label = checkbox.closest('div').querySelector('label');
+      const badge = card.querySelector('.status-badge');
+      const teaser = card.querySelector('.status-teaser');
+      const drawer = card.querySelector('.drawer-container');
+      const factsContent = card.querySelector('.facts-content');
+      
+      const wasSpotted = card.getAttribute('data-spotted') === 'true';
+      const isChecked = checkbox.checked;
+      
+      if (isChecked && !wasSpotted) {
+        // --- SPOTTED TRIGGER ---
+        card.setAttribute('data-spotted', 'true');
+        card.classList.remove('border-l-amber-500');
+        card.classList.add('border-l-emerald-500');
+        
+        badge.innerText = 'Spotted';
+        badge.classList.remove('bg-amber-100', 'text-amber-800');
+        badge.classList.add('bg-emerald-100', 'text-emerald-800');
+        
+        label.innerText = 'Spotted!';
+        checkbox.closest('div').classList.remove('bg-slate-50', 'border-slate-200');
+        checkbox.closest('div').classList.add('bg-emerald-50', 'border-emerald-200');
+        
+        const factCount = (stateFacts[stateId] && stateFacts[stateId].length) || 0;
+        teaser.innerHTML = `<span>🔓 ${factCount} secret${factCount !== 1 ? 's' : ''} revealed! (Tap to view)</span>`;
+        
+        // Auto slide open to search record animation
+        document.querySelectorAll('.state-card').forEach(otherCard => {
+          if (otherCard !== card) {
+            const otherDrawer = otherCard.querySelector('.drawer-container');
+            otherDrawer.style.maxHeight = null;
+            otherDrawer.classList.add('opacity-0');
+          }
+        });
+        
+        drawer.style.maxHeight = "150px";
+        drawer.classList.remove('opacity-0');
+        
+        const loaderHtml = `
+          <div id="search-loader-${stateId}" class="flex flex-col items-center justify-center py-6 text-slate-500 select-none animate-pulse">
+            <svg class="animate-spin h-7 w-7 text-amber-500 mb-2" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-xs font-extrabold tracking-widest text-slate-600 uppercase">SEARCHING SECRETS FOR ${stateId.toUpperCase()}...</span>
+            <span class="text-[10px] text-slate-400 mt-1">Connecting to state record archives...</span>
+          </div>
+        `;
+        
+        const drawerContentWrapper = drawer.querySelector('.pt-4');
+        const originalContent = drawerContentWrapper.innerHTML;
+        drawerContentWrapper.innerHTML = loaderHtml;
+        
+        setTimeout(() => {
+          const loader = document.getElementById(`search-loader-${stateId}`);
+          if (loader) {
+            loader.style.opacity = '0';
+            setTimeout(() => {
+              drawerContentWrapper.innerHTML = originalContent;
+              const newFactsContent = drawerContentWrapper.querySelector('.facts-content');
+              newFactsContent.classList.remove('hidden');
+              drawer.style.maxHeight = "1200px";
+              
+              card.classList.add('scale-[1.01]', 'shadow-md');
+              setTimeout(() => card.classList.remove('scale-[1.01]'), 150);
+            }, 200);
+          }
+        }, 1200);
+        
+      } else if (!isChecked && wasSpotted) {
+        // --- UNSPOTTED TRIGGER ---
+        card.setAttribute('data-spotted', 'false');
+        drawer.style.maxHeight = null;
+        drawer.classList.add('opacity-0');
+        
+        card.classList.remove('border-l-emerald-500');
+        card.classList.add('border-l-amber-500');
+        
+        badge.innerText = 'Unspotted';
+        badge.classList.remove('bg-emerald-100', 'text-emerald-800');
+        badge.classList.add('bg-amber-100', 'text-amber-800');
+        
+        label.innerText = 'Spot Plate';
+        checkbox.closest('div').classList.remove('bg-emerald-50', 'border-emerald-200');
+        checkbox.closest('div').classList.add('bg-slate-50', 'border-slate-200');
+        
+        teaser.innerHTML = `<span>🔒 Plate unspotted. Sights locked.</span>`;
+        
+        setTimeout(() => {
+          factsContent.classList.add('hidden');
+        }, 400);
+      }
+      
+      // Sync to Supabase (only on real user taps, not incoming real-time updates)
+      if (!fromDB && currentSessionId) {
+        if (isChecked && !wasSpotted) {
+          db.from('spotted_plates').insert({ session_id: currentSessionId, state_key: stateId }).then();
+        } else if (!isChecked && wasSpotted) {
+          db.from('spotted_plates').delete().eq('session_id', currentSessionId).eq('state_key', stateId).then();
+        }
+      }
+
+      recalculateGlobalScore();
+    }
+
+    // 4. GLOBAL SCORE ACCUMULATION (Summing dynamic state points)
+    function recalculateGlobalScore() {
+      const cards = document.querySelectorAll('.state-card');
+      let totalSpottedScore = 0;
+      let spottedCount = 0;
+      
+      cards.forEach(card => {
+        const key = card.id.replace('card-', '');
+        const state = stateData[key];
+        
+        if (card.getAttribute('data-spotted') === 'true') {
+          totalSpottedScore += state.currentScore || 0;
+          spottedCount += 1;
+        }
+      });
+      
+      // Set points displayed in banner
+      document.getElementById('team-points-display').innerText = totalSpottedScore;
+      const totalStates = Object.keys(stateData).length;
+      document.getElementById('progress-text-display').innerText = `${spottedCount} of ${totalStates} Spotted`;
+
+      // Update linear progress bar fill
+      const percentage = (spottedCount / totalStates) * 100;
+      document.getElementById('progress-bar-fill').style.width = `${percentage}%`;
+    }
+
+    // --- ANIMAL FACTS (one per state) ---
+    const stateFacts = {
+      massachusetts: [{ emoji: '🐋', title: 'The "Right" Whale', teaser: 'Named by the whalers who nearly wiped them out', body: 'The North Atlantic right whale got its name from 18th-century whalers who considered it ideal prey: slow enough to row after, oil-rich, and it floated when dead — the "right" whale to kill. Massachusetts whalers helped drive the species to near-extinction. Fewer than 360 survive today, making them one of the most endangered large mammals on Earth.' }],
+      california: [{ emoji: '🦅', title: 'Back From Zero', teaser: 'Every California condor alive today descends from 27 birds', body: 'In 1987, the California condor was declared extinct in the wild — only 27 individuals remained, and all were captured for a last-ditch breeding program. It worked. Over 500 condors now exist, with more than 300 flying free across California, Arizona, Utah, and Baja. Every single one descends from those 27 birds.' }],
+      texas: [{ emoji: '🦔', title: 'Built-In Quadruplets', teaser: "Texas's state mammal always gives birth to identical quads", body: "The nine-banded armadillo always gives birth to exactly four genetically identical offspring from a single fertilized egg — every litter, without exception. Scientists have used this quirk for genetic research for decades. Armadillos are also one of the only non-human animals that can contract leprosy, which has made them invaluable in leprosy vaccine research." }],
+      arizona: [{ emoji: '🐍', title: 'Roadrunner vs. Rattlesnake', teaser: 'The cartoon underestimated how deadly this bird actually is', body: 'The greater roadrunner actively hunts and kills rattlesnakes. It grabs the snake by the tail and whips its head against rocks until dead or stunned, then swallows it headfirst whole. Pairs sometimes hunt cooperatively — one distracts the snake from the front while the other strikes from behind.' }],
+      louisiana: [{ emoji: '🦩', title: 'From Zero to 67,000', teaser: "Louisiana's state bird was wiped out locally — then brought back", body: "By 1966, the brown pelican had been completely eliminated from Louisiana, poisoned through the food chain by DDT. The state imported birds from Florida and banned the pesticide. Within four decades, the population recovered to over 67,000 birds and was removed from the endangered species list in 2009 — one of the first major DDT recovery success stories." }],
+      florida: [{ emoji: '🐊', title: 'Two Apex Predators, One State', teaser: 'The only place on Earth where both species coexist wild', body: 'Florida is the only place on Earth where American alligators and American crocodiles share the same habitat. Alligators prefer freshwater; crocodiles prefer saltwater — they overlap in the brackish waters of Everglades National Park. The two species are rarely observed together, but both have been documented in the same stretches of water.' }],
+      alabama: [{ emoji: '🦐', title: 'Blind and Ancient', teaser: 'This cave crayfish may live longer than most humans', body: 'The Shelta Cave crayfish, found in a single cave system near Huntsville, is completely blind and colorless — its eyes degenerated over millions of years in total darkness. Scientists estimate individuals can live over 175 years, making it one of the longest-lived crustaceans known. The entire species occupies a flooded cave system smaller than a city block.' }],
+      alaska: [{ emoji: '🦅', title: 'Eagle Country', teaser: 'More bald eagles live here than the entire rest of the US combined', body: 'Alaska is home to roughly 30,000 bald eagles — about half the global population, more than all other US states combined. Every November, up to 4,000 bald eagles gather on a single stretch of the Chilkat River near Haines to feed on late-run salmon: the largest known concentration of bald eagles on Earth.' }],
+      arkansas: [{ emoji: '🐢', title: 'The Dinosaur With a Lure', teaser: 'This turtle sits on the riverbed and fishes with its own tongue', body: 'The alligator snapping turtle sits motionless on the river bottom with its mouth open, wriggling a pink, worm-like appendage on its tongue. Fish swim in to investigate and are snapped up. It can weigh over 200 lbs, live more than 100 years, and is strong enough to snap a broomstick in half — the largest freshwater turtle in North America.' }],
+      colorado: [{ emoji: '🐾', title: 'Running Out of Mountain', teaser: "One of the first documented climate change victims can't climb any higher", body: "The American pika lives in Colorado's high alpine rockfields and cannot survive temperatures above 78°F. As temperatures rise, pikas retreat to higher elevations — but many Colorado populations are already at the summit with nowhere left to go. Several have gone locally extinct in recent decades. The pika is one of the first documented vertebrate casualties of climate change in North America." }],
+      connecticut: [{ emoji: '🐋', title: 'The Biggest Brain on Earth', teaser: "Connecticut's state animal has a 17-pound brain", body: "The sperm whale — Connecticut's state animal, chosen to honor the state's whaling history — has the largest brain of any animal that has ever existed: up to 17 pounds. Its sonar clicks, used to hunt squid a mile underwater in total darkness, are the loudest biological sound ever recorded at around 230 decibels — louder than a rocket launch heard at close range." }],
+      delaware: [{ emoji: '🦀', title: "The World's Largest Crab Spawn", teaser: 'A million horseshoe crabs emerge here on a single spring tide', body: 'Every May, up to 1 million horseshoe crabs emerge from Delaware Bay to spawn — one of the largest single-species gatherings on Earth. The event is so ancient and reliable that the red knot shorebird evolved its entire migration around it: flying from South America to the Arctic, stopping in Delaware specifically to gorge on the eggs and double its body weight in two weeks.' }],
+      georgia: [{ emoji: '🐢', title: 'The Magnetic GPS', teaser: "This sea turtle reads Earth's magnetic field like a home address", body: "Female loggerhead sea turtles navigate thousands of miles of open ocean using Earth's magnetic field not just as a compass, but as a precise coordinate system. When it is time to nest, they return to the exact beach where they hatched, homing in on its unique magnetic signature. Georgia's barrier islands are among the most important loggerhead nesting beaches on the East Coast." }],
+      hawaii: [{ emoji: '🪿', title: 'The Goose That Forgot How to Swim', teaser: "Hawaii's state bird evolved from Canada geese and lost its webbing", body: "About 500,000 years ago, Canada geese blown off course landed on Hawaii and never left. Their descendants gradually lost most of their toe webbing (useless on lava fields), grew stronger legs for walking on rough terrain, and became the nene. By 1952, only 30 remained due to hunting and invasive predators. A captive breeding program has since restored the population to roughly 2,500." }],
+      idaho: [{ emoji: '🐟', title: 'The Hardest Commute on Earth', teaser: 'These salmon swim 900 miles uphill without eating', body: "Snake River sockeye salmon complete the most grueling migration of any fish: 900 miles upstream from the Pacific Ocean, ascending 6,500 feet in elevation. They navigate four major dams, fight current the entire way, and have eaten nothing for the whole journey by the time they reach their spawning grounds in Idaho's remote mountain lakes. Many do not survive the return." }],
+      illinois: [{ emoji: '🦅', title: 'Sky Wolves', teaser: 'Chicago has more nesting peregrine falcons than most wild clifflines', body: "Chicago has one of the densest urban peregrine falcon populations in the world — over 30 nesting pairs on skyscrapers, bridges, and clock towers. The birds arrived naturally in the 1980s, finding that building ledges mimic cliff faces, the city's pigeon population provides year-round food, and updrafts around tall buildings replicate the thermals they use for hunting." }],
+      indiana: [{ emoji: '🦇', title: '484 Per Square Foot', teaser: "Indiana's namesake bat hibernates in staggering density", body: "The Indiana bat — literally named after the state where it was first scientifically described — hibernates in caves in clusters so dense that up to 484 individuals occupy a single square foot. This extreme clustering conserves heat, letting thousands survive winter on stored fat alone. White-nose syndrome, a fungal disease with no evolutionary precedent in North American bats, has killed over 90% of some colonies since arriving around 2006." }],
+      iowa: [{ emoji: '🐦', title: 'Martha', teaser: 'The last of her kind died alone in a Cincinnati zoo', body: "The passenger pigeon was once the most numerous bird in North America — flocks of billions that darkened the sky for days. The last confirmed wild sighting was in Iowa around 1900. The final individual, a female named Martha, died in her cage at the Cincinnati Zoo on September 1, 1914. She had been alone for years. Her body is preserved at the Smithsonian." }],
+      kansas: [{ emoji: '🦬', title: 'The Great Slaughter', teaser: '60 million animals reduced to 300 in under 50 years', body: "An estimated 30 to 60 million American bison once roamed the Great Plains. By 1889, fewer than 300 remained — shot for hides and tongues, with railroads hiring hunters to clear herds that delayed trains. The extermination was also deliberate federal policy: destroying the bison was understood as a means to destroy the Plains tribes who depended on them. Recovery programs have since brought numbers to roughly 500,000." }],
+      kentucky: [{ emoji: '🐟', title: 'Born Blind, Evolved That Way', teaser: 'This cave fish traded its eyes away over millions of years', body: "Mammoth Cave — the world's longest known cave system at over 400 mapped miles — contains the northern cavefish (Amblyopsis spelaea), which has no functional eyes. In total darkness, eyes are not only useless but metabolically expensive, so evolution eliminated them over millions of years. The fish navigate, hunt, and breed entirely through pressure sensors along their lateral lines." }],
+      maryland: [{ emoji: '🦀', title: 'The One-Shot Sperm Bank', teaser: 'Female blue crabs mate once and stay fertile for years', body: "The female blue crab mates only once in her lifetime — during a brief window after her final molt when she is soft and vulnerable. She stores the sperm in a specialized compartment and uses it to fertilize multiple separate broods over the following two to three years. The male she mates with guards her protectively for up to two weeks until her new shell hardens." }],
+      maine: [{ emoji: '🐦', title: 'The Man Who Fooled Puffins', teaser: 'He used wooden decoys to convince seabirds to colonize a barren island', body: "Atlantic puffins were hunted to extinction from Maine's islands by 1900. In 1973, biologist Steve Kress transplanted chicks from Newfoundland to a remote Maine island, then surrounded the landing area with carved wooden puffin decoys and played recorded calls — tricking young birds into treating the island as an established colony. The deception worked. Maine now has over 1,000 breeding puffin pairs across five restored islands." }],
+      michigan: [{ emoji: '🐟', title: 'They Burned Them for Fuel', teaser: 'Great Lakes fishermen once shoveled this fish into steamboat furnaces', body: "Lake sturgeon once filled the Great Lakes in such numbers that 19th-century fishermen shoveled them ashore and burned them as steamboat fuel, or rendered them into oil, because they were too large and bony to sell easily. After decades of this, populations collapsed. Lake sturgeon can live 150 years — a fish burned for fuel in 1880 may have been born before the American Revolution. They are now threatened in Michigan waters." }],
+      minnesota: [{ emoji: '🦆', title: 'The Bird That Reads the Stars', teaser: "Minnesota's state bird navigates by the night sky during migration", body: "The common loon navigates its annual migration using the stars, reading the night sky as a celestial map. Loons are also one of the few birds with solid rather than hollow bones, making them exceptional divers capable of going over 200 feet deep — but nearly incapable of walking on land. They can only take off after a long running start across open water, which is why loons almost never land anywhere except lakes." }],
+      mississippi: [{ emoji: '🐦', title: 'One County, 130 Birds', teaser: 'This critically endangered crane exists in exactly one county on Earth', body: "The Mississippi sandhill crane is found in only one place on Earth: a wildlife refuge in Jackson County, Mississippi. About 130 wild birds survive. The species depends on wet pine savannas maintained by periodic fire — a habitat nearly wiped out by development. The remaining patch is surrounded by suburbs, and every nesting season is monitored individually by wildlife biologists." }],
+      missouri: [{ emoji: '🦎', title: "America's Giant Breathes Through Its Skin", teaser: "The country's largest salamander barely uses its lungs", body: "The Ozark hellbender — found only in the cold, clear rivers of the Missouri Ozarks — can reach nearly 2.5 feet in length and breathes almost entirely through wrinkled folds of loose skin along its body, not through its vestigial lungs. The folds increase surface area for absorbing dissolved oxygen directly from the water. Populations have crashed by over 75% since the 1980s as sedimentation smothers the rocky riverbeds where females lay eggs." }],
+      montana: [{ emoji: '🐻', title: 'Recovery and a New Ceiling', teaser: "Montana's grizzlies bounced back from 136 — then hit a wall", body: "By 1975, the Yellowstone-area grizzly bear population had been reduced to an estimated 136 animals. After federal protection, numbers recovered to around 700 bears. But the population is now hemmed in by highways and ranchland in every direction, preventing the range expansion needed for long-term genetic health. The bears cannot disperse, and the population appears to have hit the ceiling the surrounding landscape permits." }],
+      nebraska: [{ emoji: '🐦', title: "The World's Biggest Crane Convention", teaser: "80% of Earth's sandhill cranes stop here every March", body: "Every spring, up to 600,000 sandhill cranes — roughly 80% of the world's entire population — converge on a 100-mile stretch of Nebraska's Platte River. They arrive from southern wintering grounds and stay three to four weeks before continuing to Arctic breeding grounds. The spectacle has recurred here for millions of years, making it one of the oldest continuously operating wildlife convergences on the continent." }],
+      nevada: [{ emoji: '🐟', title: 'The Rarest Fish Alive', teaser: 'The entire wild population sometimes fits in a parking space', body: "The Devil's Hole pupfish lives only in one geothermal pool in a Nevada cave — a pool roughly the size of two parking spaces, with a shallow shelf only 3.5 meters wide where the fish can actually breed. The total wild population fluctuates between 35 and 548 individuals. They have been genetically isolated in this cave for approximately 20,000 years and represent one of the smallest stable vertebrate populations on Earth." }],
+      newHampshire: [{ emoji: '🫎', title: '150,000 Hitchhikers', teaser: 'A single moose can carry enough ticks to bleed to death', body: "New Hampshire's moose are dying of tick overload. A single moose can host up to 150,000 winter ticks — enough to drain a lethal amount of blood if winter ends before the ticks drop off. As winters warm and shorten, tick survival rates are climbing. Moose calf mortality has exceeded 70% in some New Hampshire study areas, and the state's moose population has dropped by over 40% in recent decades." }],
+      newJersey: [{ emoji: '🦈', title: 'The Attacks That Inspired Jaws', teaser: 'Five people attacked in 12 days — one of them 50 miles inland', body: "In July 1916, a series of shark attacks along the New Jersey shore killed four people and injured one in just 12 days — the event that directly inspired Peter Benchley's Jaws. The most shocking attack occurred in Matawan Creek, a tidal waterway 50 miles from the ocean, where a shark traveled inland and killed two people in the same afternoon. The sequence remains one of the most studied shark attack events in history." }],
+      newMexico: [{ emoji: '🐺', title: 'Seven Founders', teaser: 'Every Mexican wolf alive today descends from just a handful of animals', body: "The Mexican gray wolf was completely extirpated from the wild by 1980. Only a small number of individuals were confirmed genetically pure enough to form a breeding population. Every Mexican wolf alive today — roughly 200 in the wild across New Mexico and Arizona, and hundreds more in captivity — descends from that tiny founding group. Severe inbreeding remains an existential threat to the subspecies." }],
+      newYork: [{ emoji: '🦅', title: 'Pale Male', teaser: 'A Central Park hawk who outlasted a legal battle with a celebrity neighbor', body: "In 1993, a red-tailed hawk named Pale Male became the first documented to nest on a New York City building — a Fifth Avenue apartment overlooking Central Park. In 2004, the co-op board removed his nest. Birders and protesters rallied in Central Park; the story made national news. The board reversed course and the nest was restored. Pale Male has since raised dozens of chicks and is still nesting, now in his early 30s." }],
+      northCarolina: [{ emoji: '🐺', title: 'Fewer Than a School Bus', teaser: "The world's rarest wolf survives in one North Carolina peninsula", body: "The red wolf is the world's most endangered canid. Declared extinct in the wild in 1980 with only 14 genetically pure individuals surviving, it was reintroduced to the Albemarle Peninsula of eastern North Carolina in 1987. Only about 15 to 20 wild red wolves remain today — fewer individuals than a school bus holds — in a single isolated patch of coastal swamp, with every lineage tracked individually by biologists." }],
+      northDakota: [{ emoji: '🐦', title: 'The Inherited Dance', teaser: 'This bird performs an elaborate mating display it never had to learn', body: "Every spring at dawn, male sharp-tailed grouse gather on leks — traditional dancing grounds used for generations — and perform a complex mating display: stamping their feet up to 20 times per second, fanning their tail, and inflating purple air sacs on their necks. The display is entirely instinctive. Males raised in complete isolation from other grouse perform the full routine perfectly on schedule their very first spring." }],
+      ohio: [{ emoji: '🐻', title: 'They Came Back On Their Own', teaser: 'Black bears returned to Ohio with no human help after 170 years', body: "The American black bear was completely extirpated from Ohio by 1850. No reintroduction program was ever launched. But over the past two decades, bears from Pennsylvania and West Virginia have been dispersing westward on their own — crossing highways, swimming rivers, establishing territory in eastern Ohio. There are now an estimated 100 or more bears in the state with the population growing annually. Ohio is experiencing spontaneous, unsolicited rewilding." }],
+      oklahoma: [{ emoji: '🐦', title: 'The Sky Dancer', teaser: "Oklahoma's state bird performs aerial acrobatics with a tail longer than its body", body: "The scissor-tailed flycatcher has a tail longer than its own body, used as a rudder for precise mid-air pivots when catching flying insects. During courtship, males perform sky dances: climbing hundreds of feet, then tumbling and zigzagging downward in erratic loops with the long tail streaming behind them. Each display is improvised and unrepeatable." }],
+      oregon: [{ emoji: '🐙', title: 'The Midnight Heist', teaser: 'An aquarium octopus was burglarizing a neighboring tank at night', body: "Giant Pacific octopuses have been documented in multiple aquarium settings escaping their tanks at night, crossing the floor to neighboring tanks to eat fish, and returning before morning — undetected until overnight cameras were installed. Native to the Oregon coast, giant Pacific octopuses are the largest octopus species in the world and are now understood to be intelligent enough to recognize individual human faces." }],
+      pennsylvania: [{ emoji: '🦎', title: 'The Skin Breather', teaser: "Pennsylvania's giant salamander has lungs it barely uses", body: "The eastern hellbender — North America's largest salamander, reaching nearly 30 inches — absorbs most of its oxygen directly through wrinkled folds of loose skin along its body, not through its vestigial lungs. The folds create a large surface area for extracting dissolved oxygen from fast-moving water. Hellbenders require cold, clear, highly oxygenated streams — habitat disappearing as agricultural sediment buries their rocky nest sites." }],
+      rhodeIsland: [{ emoji: '🪲', title: 'The Undertaker Beetle', teaser: 'This endangered insect buries entire dead animals to raise its young', body: "The American burying beetle — once found across 35 states, now surviving in scattered populations including Rhode Island — buries small animal carcasses underground as food for its larvae. Both parents remain with the eggs and actively feed the developing larvae for weeks, extraordinary parental devotion for an insect. Its collapse is linked partly to the extinction of the passenger pigeon, whose abundant carcasses once formed a key part of its food supply." }],
+      southCarolina: [{ emoji: '🐦', title: 'The Fastest Bill on Land', teaser: "America's only native stork catches fish by touch alone", body: "The wood stork — North America's only native stork — feeds by wading through murky water with its bill held open just below the surface. When the bill touches a fish, it snaps shut in 25 milliseconds: one of the fastest reflexes of any vertebrate, roughly four times faster than a human blink. South Carolina's coastal swamps and cypress forests hold one of the species' last major nesting strongholds in the United States." }],
+      southDakota: [{ emoji: '🦡', title: 'Back From the Dead', teaser: "Declared extinct — then a ranch dog proved everyone wrong", body: "The black-footed ferret was declared extinct in 1979. In 1981, a ranch dog brought a dead one to a Wyoming farmhouse. Biologists found a small surviving colony — then watched as canine distemper killed all but 18. Those 18 were captured for a breeding program that saved the species from permanent extinction. South Dakota's Badlands now host the largest black-footed ferret reintroduction site in the world, with over 150 wild ferrets." }],
+      tennessee: [{ emoji: '🐟', title: 'The Fish That Stopped a Dam', teaser: 'A 3-inch fish came within one Supreme Court ruling of halting a $100M dam', body: "In 1973, biologists discovered the snail darter — a previously unknown 3-inch perch — in the exact stretch of the Little Tennessee River where the TVA's Tellico Dam was under construction. The case reached the Supreme Court, which ruled the dam must stop. Congress then passed a special exemption and the dam was built anyway — but the case permanently established that a newly discovered species could legally halt a major federal infrastructure project." }],
+      utah: [{ emoji: '🦐', title: 'Pink Salt', teaser: 'A tiny crustacean turns an entire lake pink and supplies the world with fish food', body: "The Great Salt Lake is too salty for almost any life — except brine shrimp (Artemia franciscana), which thrive in such numbers they visibly tint entire sections of the lake pink or orange. Up to 37,000 metric tons are harvested annually and exported worldwide as food for farmed fish and aquarium animals. The shrimp survive by actively pumping salt out of their bodies; when lake levels drop and salinity spikes, even they begin to struggle." }],
+      vermont: [{ emoji: '🦁', title: 'The 1,500-Mile Ghost', teaser: 'A cougar walked from South Dakota to Vermont — then got hit by a car in Connecticut', body: "In 2011, a mountain lion was struck and killed by a car in Connecticut. DNA analysis revealed it had walked from the Black Hills of South Dakota — at least 1,500 miles — the longest documented overland dispersal of any land mammal in modern North American wildlife records. Evidence from trail cameras suggests it passed through Minnesota, Wisconsin, Michigan, and New York. The eastern mountain lion had been officially declared extinct just weeks before the animal arrived." }],
+      virginia: [{ emoji: '🦪', title: "The Bay's Lost Filter", teaser: "Virginia's oysters once cleaned the entire Chesapeake Bay every three days", body: "The eastern oyster once existed in such abundance that the entire volume of the Chesapeake Bay passed through oyster reefs approximately every three days. A century of overharvesting reduced the population by 99%, and the Bay lost its biological filtration — nitrogen and algae accumulated unchecked, producing dead zones that persist today. Restoration projects have replanted over a billion oysters in Virginia waters, which can now filter the Bay's volume roughly once a year." }],
+      washington: [{ emoji: '🐋', title: 'Their Own Language', teaser: "These killer whales have dialects so distinct they can't communicate with other orcas", body: "The Southern Resident killer whales — three family groups totaling about 73 individuals in the waters off Washington — have developed calls so specific that researchers can identify individual pods by sound alone. J, K, and L Pod share some calls but maintain unique sequences that function as dialects. These orcas are so culturally and genetically distinct from other killer whale populations that scientists classify them as a separate ecotype." }],
+      westVirginia: [{ emoji: '🐿️', title: 'Stranded on the Summit', teaser: 'This squirrel has been genetically isolated on mountain peaks since the Ice Age', body: "The West Virginia northern flying squirrel lives only in isolated patches of red spruce forest capping the highest peaks in West Virginia — sky islands stranded when the ice age ended and lower-elevation forests warmed beyond the squirrel's tolerance. These summit populations have been cut off from one another for thousands of years. The subspecies was the first mammal ever delisted from the Endangered Species Act due to successful recovery, in 2008." }],
+      wisconsin: [{ emoji: '🦢', title: 'Teaching Cranes to Migrate', teaser: 'Scientists in bird costumes flew ultralight planes to show cranes the way south', body: "Whooping cranes were down to 21 wild birds in 1941. After captive breeding rebuilt the population, young birds needed to learn a migration route — knowledge normally passed from parents. Starting in 2001, biologists in white crane costumes flew ultralight aircraft from Wisconsin to Florida, leading flocks of young whooping cranes 1,200 miles to their wintering grounds. The birds eventually learned to fly the route independently, the first time humans successfully taught wild birds a migration using aircraft." }],
+      wyoming: [{ emoji: '🦌', title: 'Running From a Ghost', teaser: 'This animal evolved to outrun a predator extinct for 10,000 years', body: "The pronghorn antelope can sustain 55 mph for miles — the second fastest land animal on Earth. No predator alive today can catch it. Scientists believe the pronghorn evolved this speed to escape the American cheetah (Miracinonyx trumani), a cheetah-like cat that roamed North America until going extinct roughly 10,000 years ago. The pronghorn is running from a memory — maintaining extreme metabolic hardware for a threat that no longer exists." }]
+    };
+
+    // 5. CARD RENDERING
+    function renderStateCards() {
+      const container = document.getElementById('states-container');
+      container.innerHTML = '';
+
+      const sortedEntries = Object.entries(stateData).sort(([kA, sA], [kB, sB]) => {
+        if (kA === 'massachusetts') return -1;
+        if (kB === 'massachusetts') return  1;
+        return sA.name.localeCompare(sB.name);
+      });
+
+      for (const [key, state] of sortedEntries) {
+        const facts = (stateFacts[key] && stateFacts[key].length > 0) ? stateFacts[key] : [
+          { emoji: '🔒', title: 'Coming Soon', teaser: 'Spot this plate to unlock a secret', body: 'A bizarre animal fact about this state is coming soon!' },
+        ];
+
+        const factsHtml = facts.map((fact, i) => `
+          <div class="fact-panel bg-white/60 border border-slate-100 rounded-2xl overflow-hidden cursor-pointer hover:bg-slate-50/80 transition-all" onclick="event.stopPropagation(); toggleSubDrawer('${key}', ${i})">
+            <div class="flex items-center justify-between px-4 py-3">
+              <div class="flex items-center gap-3 min-w-0">
+                <span class="text-lg select-none shrink-0">${fact.emoji}</span>
+                <div class="min-w-0">
+                  <h4 class="text-xs font-black text-slate-700 truncate">${fact.title}</h4>
+                  <p class="text-[10px] text-slate-400 font-medium truncate">${fact.teaser}</p>
+                </div>
+              </div>
+              <svg class="sub-chevron w-4 h-4 text-slate-400 shrink-0 transition-transform duration-300 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+              </svg>
+            </div>
+            <div class="sub-drawer drawer-transition overflow-hidden max-h-0 opacity-0">
+              <div class="px-4 pb-4 pt-1 border-t border-slate-100">
+                <div class="bg-white/70 border border-slate-100 rounded-xl p-3">
+                  <p class="text-xs text-slate-600 leading-relaxed">${fact.body}</p>
+                </div>
+                <a href="https://www.google.com/search?q=${encodeURIComponent('fascinating unusual animal facts ' + state.name)}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   onclick="event.stopPropagation()"
+                   class="mt-3 flex items-center justify-center gap-1.5 pt-3 border-t border-slate-100 text-[10px] font-black text-amber-500 hover:text-amber-400 tracking-widest uppercase transition-colors select-none">
+                  🔍 More ${state.name} animal facts
+                </a>
+              </div>
+            </div>
+          </div>
+        `).join('');
+
+        container.insertAdjacentHTML('beforeend', `
+          <div id="card-${key}"
+               class="state-card mb-3 bg-white rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-amber-500 overflow-hidden transition-all duration-200 cursor-pointer select-none"
+               data-spotted="false"
+               data-state-name="${state.name}"
+               onclick="toggleCardDrawer('${key}')">
+
+            <div class="px-4 pt-4 pb-3">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <h2 class="text-sm font-black text-slate-800 leading-tight">${state.name}</h2>
+                  <p class="status-teaser text-[10px] text-slate-400 mt-0.5 font-medium">🔒 Plate unspotted. Sights locked.</p>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span class="points-badge px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 shrink-0">+0 pts</span>
+                  <span class="status-badge text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Unspotted</span>
+                </div>
+              </div>
+              <div class="flex items-center bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 mt-3 gap-3" onclick="event.stopPropagation()">
+                <input type="checkbox" id="check-${key}" onchange="toggleLicensePlate('${key}')" class="w-4 h-4 rounded accent-emerald-500 cursor-pointer shrink-0">
+                <label for="check-${key}" class="text-xs font-bold text-slate-600 cursor-pointer select-none">Spot Plate</label>
+              </div>
+            </div>
+
+            <div class="drawer-container drawer-transition overflow-hidden border-t border-slate-100 opacity-0 max-h-0">
+              <div class="pt-4 px-4 pb-4">
+                <div class="facts-content hidden space-y-2">
+                  ${factsHtml}
+                </div>
+              </div>
+            </div>
+
+          </div>
+        `);
+      }
+
+      calculatePointsMatrix(currentOrigin);
+      applyFilters();
+    }
+
+    // 6. NAVIGATION FILTER ACTIONS
+    function changeFilter(btn, filterValue) {
+      document.querySelectorAll('.filter-btn').forEach(otherBtn => {
+        otherBtn.classList.remove('active', 'bg-gradient-to-r', 'from-amber-500', 'to-amber-600', 'text-slate-950', 'shadow-md');
+        otherBtn.classList.add('text-slate-400', 'hover:text-slate-200');
+      });
+      
+      btn.classList.remove('text-slate-400', 'hover:text-slate-200');
+      btn.classList.add('active', 'bg-gradient-to-r', 'from-amber-500', 'to-amber-600', 'text-slate-950', 'shadow-md');
+      
+      applyFilters();
+    }
+
+    // 6. SEARCH & NAVIGATION TOGGLE COMBINED
+    function applyFilters() {
+      const searchQuery = document.getElementById('search-input').value.trim().toLowerCase();
+      const activeFilterBtn = document.querySelector('.filter-btn.active');
+      const filterValue = activeFilterBtn ? activeFilterBtn.getAttribute('data-filter') : 'all';
+      
+      const cards = document.querySelectorAll('.state-card');
+      
+      cards.forEach(card => {
+        const stateName = card.getAttribute('data-state-name').toLowerCase();
+        const isSpotted = card.getAttribute('data-spotted') === 'true';
+        
+        const matchesSearch = stateName.includes(searchQuery);
+        
+        let matchesFilter = false;
+        if (filterValue === 'all') {
+          matchesFilter = true;
+        } else if (filterValue === 'spotted') {
+          matchesFilter = isSpotted;
+        } else if (filterValue === 'unspotted') {
+          matchesFilter = !isSpotted;
+        }
+        
+        if (matchesSearch && matchesFilter) {
+          card.classList.remove('hidden');
+          card.style.opacity = '1';
+        } else {
+          card.classList.add('hidden');
+          card.style.opacity = '0';
+        }
+      });
+    }
+
+    renderStateCards();
+  </script>
+</body>
+</html>
