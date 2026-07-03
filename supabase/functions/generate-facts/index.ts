@@ -141,7 +141,7 @@ function buildKeyedPrompt(theme, plates) {
 
 The trip's theme for this session is: "${theme}"
 
-Write ONE fact per plate below, themed around "${theme}" rather than animal facts. Where it fits naturally, tie the fact to the specific state/plate; if no natural connection exists, a general "${theme}" fact is fine instead. No two facts should repeat the same core information.
+Write ONE fact per plate below, themed around "${theme}" rather than animal facts. Every fact must be genuinely, specifically about that plate's own state (or about Canada / the diplomatic community / consular affairs for the three bonus plates) AND connect to "${theme}" — do NOT fall back to a generic "${theme}" fact with no real link to that specific place. If a state has no famous connection to the theme, dig for a real, true, verifiable but lesser-known event, person, invention, or location in that state that ties to the theme, rather than inventing a connection or writing something vague. No two facts should repeat the same core information.
 
 Plates, in order:
 ${numberedList}
