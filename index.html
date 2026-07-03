@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>License Plate Adventure! - Plate Spotter & Fact Finder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛣️</text></svg>">
   <!-- Tailwind CSS Version 3 CDN -->
@@ -149,6 +149,11 @@
           </div>
         </div>
         <div>
+          <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Fact Theme (optional)</label>
+          <input type="text" id="setup-fact-theme" placeholder="e.g., space facts, 90s movies, food trivia" class="w-full bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all font-semibold">
+          <p class="text-[9px] text-slate-500 mt-1 leading-snug">Leave blank for the default animal facts. Custom themes take a minute to generate for the whole team.</p>
+        </div>
+        <div>
           <label class="block text-[10px] font-bold text-slate-400 tracking-wider uppercase mb-1.5">Team Passphrase</label>
           <input type="password" id="setup-passphrase" placeholder="••••••••" class="w-full bg-slate-900 border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all">
         </div>
@@ -167,6 +172,9 @@
       </button>
       <button id="leave-session-btn" onclick="leaveSession()" class="hidden mt-1 w-full py-2 text-red-400 hover:text-red-300 font-bold text-xs tracking-widest uppercase transition-colors">
         ↩ Leave Session
+      </button>
+      <button id="delete-session-btn" onclick="deleteSession()" class="hidden mt-1 w-full py-2 text-red-500/70 hover:text-red-500 font-bold text-[10px] tracking-widest uppercase transition-colors">
+        🗑 Delete Session Permanently
       </button>
 
     </div>
@@ -252,7 +260,7 @@
     </div>
 
     <!-- SCROLLABLE LIST CONTENT AREA -->
-    <div id="states-container" class="px-4 py-5 overflow-y-auto" style="height: calc(100vh - 250px); min-height: 550px;">
+    <div id="states-container" class="px-4 py-5 overflow-y-auto" style="height: calc(100vh - 250px); height: calc(100dvh - 250px); min-height: 550px;">
       <!-- Cards injected by renderStateCards() -->
 
     </div>
@@ -300,6 +308,34 @@
 
     function leaveSession() {
       if (!confirm('Leave this session? You can rejoin anytime with the passphrase.')) return;
+      localStorage.removeItem('lpa_session_id');
+      location.reload();
+    }
+
+    async function deleteSession() {
+      if (!currentSessionId || !currentSessionData) return;
+      if (!confirm(`Permanently delete "${currentSessionData.session_name}" and all spotted plates? This can't be undone.`)) return;
+
+      const btn = document.getElementById('delete-session-btn');
+      btn.innerText = 'Deleting...';
+      btn.disabled = true;
+
+      const { error: plateError } = await db.from('spotted_plates').delete().eq('session_id', currentSessionId);
+      if (plateError) {
+        alert("Couldn't delete session. Please try again.");
+        btn.innerText = '🗑 Delete Session Permanently';
+        btn.disabled = false;
+        return;
+      }
+
+      const { error: sessionError } = await db.from('sessions').delete().eq('id', currentSessionId);
+      if (sessionError) {
+        alert("Couldn't delete session. Please try again.");
+        btn.innerText = '🗑 Delete Session Permanently';
+        btn.disabled = false;
+        return;
+      }
+
       localStorage.removeItem('lpa_session_id');
       location.reload();
     }
@@ -363,9 +399,10 @@
       localStorage.setItem('lpa_session_id', sessionData.id);
       document.getElementById('session-display-name').innerText = `Session: ${sessionData.session_name}`;
       updateDateDisplay();
-      calculatePointsMatrix();
-      await loadSpottedPlates(sessionData.id);
+      // Rebuilds every card using this session's fact theme/status, then restores spotted plates
+      await refreshAllFacts();
       subscribeToPlates(sessionData.id);
+      subscribeToSessionUpdates(sessionData.id);
       document.getElementById('setup-screen').style.transform = 'translateY(100%)';
     }
 
@@ -379,9 +416,13 @@
 
     // Load plates already spotted by any family member
     async function loadSpottedPlates(sessionId) {
-      const { data, error } = await db.from('spotted_plates').select('state_key').eq('session_id', sessionId);
+      // select('*') rather than named columns so this still works before the label/fact_index migration lands
+      const { data, error } = await db.from('spotted_plates').select('*').eq('session_id', sessionId);
       if (error || !data) return;
-      data.forEach(({ state_key }) => {
+      data.forEach(({ state_key, label, fact_index }) => {
+        if (state_key.startsWith('wildcard-')) {
+          ensureWildcardCard(state_key, label, fact_index);
+        }
         const checkbox = document.getElementById(`check-${state_key}`);
         if (checkbox && !checkbox.checked) {
           checkbox.checked = true;
@@ -394,6 +435,9 @@
     function subscribeToPlates(sessionId) {
       db.channel(`plates-${sessionId}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'spotted_plates', filter: `session_id=eq.${sessionId}` }, (payload) => {
+          if (payload.new.state_key.startsWith('wildcard-')) {
+            ensureWildcardCard(payload.new.state_key, payload.new.label, payload.new.fact_index);
+          }
           const checkbox = document.getElementById(`check-${payload.new.state_key}`);
           if (checkbox && !checkbox.checked) {
             checkbox.checked = true;
@@ -405,6 +449,21 @@
           if (checkbox && checkbox.checked) {
             checkbox.checked = false;
             toggleLicensePlate(payload.old.state_key, true);
+          }
+        })
+        .subscribe();
+    }
+
+    // Real-time subscription on the session row itself — picks up fact_theme/custom_facts/facts_status
+    // changes made by this device (e.g. Edge Function finishing) or a teammate editing settings elsewhere.
+    function subscribeToSessionUpdates(sessionId) {
+      db.channel(`session-${sessionId}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` }, (payload) => {
+          const prevStatus = currentSessionData?.facts_status;
+          currentSessionData = payload.new;
+          updateDateDisplay();
+          if (payload.new.facts_status !== prevStatus) {
+            refreshAllFacts();
           }
         })
         .subscribe();
@@ -510,6 +569,13 @@
         lat: 38.9896,
         lon: -75.5050,
         pop: 1018396,
+        currentScore: 0
+      },
+      dc: {
+        name: "Washington, D.C.",
+        lat: 38.9072,
+        lon: -77.0369,
+        pop: 689545,
         currentScore: 0
       },
       georgia: {
@@ -849,6 +915,7 @@
       const sessionName = document.getElementById('setup-session-name').value.trim();
       const startDate = document.getElementById('setup-start-date').value;
       const endDate = document.getElementById('setup-end-date').value;
+      const factTheme = document.getElementById('setup-fact-theme').value.trim();
       const passphrase = document.getElementById('setup-passphrase').value;
       if (!sessionName || !startDate || !endDate || !passphrase) {
         alert("Please fill in all fields before launching your adventure!");
@@ -862,7 +929,9 @@
         passphrase: passphrase,
         origin_state: 'massachusetts',
         start_date: startDate,
-        end_date: endDate
+        end_date: endDate,
+        fact_theme: factTheme || null,
+        facts_status: factTheme ? 'pending' : 'none'
       }).select().single();
       if (error) {
         alert("Couldn't create session. Please try again.");
@@ -870,7 +939,15 @@
         btn.disabled = false;
         return;
       }
+      if (factTheme) requestFactGeneration(data.id, factTheme);
       await enterSession(data);
+    }
+
+    // Fire-and-forget call to the generate-facts Edge Function — the session enters
+    // immediately with default facts and swaps in themed facts via realtime once ready.
+    function requestFactGeneration(sessionId, theme) {
+      db.functions.invoke('generate-facts', { body: { session_id: sessionId, theme } })
+        .catch(err => console.warn('Fact generation request failed to send', err));
     }
 
     function openSessionSettings() {
@@ -884,6 +961,7 @@
       document.getElementById('setup-session-name').value = currentSessionData.session_name || '';
       document.getElementById('setup-start-date').value   = currentSessionData.start_date   || '';
       document.getElementById('setup-end-date').value     = currentSessionData.end_date     || '';
+      document.getElementById('setup-fact-theme').value   = currentSessionData.fact_theme   || '';
       document.getElementById('setup-passphrase').value   = '';
 
       // Update labels
@@ -892,9 +970,10 @@
       document.getElementById('setup-btn').innerText      = 'Save Changes';
       document.getElementById('setup-btn').setAttribute('onclick', 'saveSessionSettings()');
 
-      // Show cancel + leave buttons, open overlay
+      // Show cancel + leave + delete buttons, open overlay
       document.getElementById('settings-close-btn').classList.remove('hidden');
       document.getElementById('leave-session-btn').classList.remove('hidden');
+      document.getElementById('delete-session-btn').classList.remove('hidden');
       document.getElementById('setup-screen').style.transform = 'translateY(0)';
     }
 
@@ -902,29 +981,45 @@
       const sessionName = document.getElementById('setup-session-name').value.trim();
       const startDate   = document.getElementById('setup-start-date').value;
       const endDate     = document.getElementById('setup-end-date').value;
+      const newTheme    = document.getElementById('setup-fact-theme').value.trim();
       if (!sessionName || !startDate || !endDate) {
         alert('Please fill in session name and dates.');
         return;
       }
+
+      const themeChanged = newTheme !== (currentSessionData.fact_theme || '');
+      if (themeChanged) {
+        const confirmMsg = newTheme
+          ? `Change the fact theme to "${newTheme}"? This regenerates every fact and replaces ones your team has already seen.`
+          : 'Clear the custom fact theme and go back to the default animal facts?';
+        if (!confirm(confirmMsg)) return;
+      }
+
       const btn = document.getElementById('setup-btn');
       btn.innerText = 'Saving...';
       btn.disabled  = true;
-      const { error } = await db.from('sessions').update({
-        session_name: sessionName,
-        start_date:   startDate,
-        end_date:     endDate
-      }).eq('id', currentSessionId);
+
+      const updatePayload = { session_name: sessionName, start_date: startDate, end_date: endDate };
+      if (themeChanged) {
+        updatePayload.fact_theme   = newTheme || null;
+        updatePayload.facts_status = newTheme ? 'pending' : 'none';
+        updatePayload.custom_facts = null;
+      }
+
+      const { error } = await db.from('sessions').update(updatePayload).eq('id', currentSessionId);
       if (error) {
         alert("Couldn't save changes. Please try again.");
         btn.innerText = 'Save Changes';
         btn.disabled  = false;
         return;
       }
-      currentSessionData.session_name = sessionName;
-      currentSessionData.start_date   = startDate;
-      currentSessionData.end_date     = endDate;
+      Object.assign(currentSessionData, updatePayload);
       document.getElementById('session-display-name').innerText = `Session: ${sessionName}`;
       updateDateDisplay();
+      if (themeChanged) {
+        refreshAllFacts();
+        if (newTheme) requestFactGeneration(currentSessionId, newTheme);
+      }
       closeSettingsOverlay();
     }
 
@@ -933,6 +1028,7 @@
       document.getElementById('mode-toggle').classList.remove('hidden');
       document.getElementById('settings-close-btn').classList.add('hidden');
       document.getElementById('leave-session-btn').classList.add('hidden');
+      document.getElementById('delete-session-btn').classList.add('hidden');
       // Reset form button back to create-session mode
       document.getElementById('setup-title').innerText    = 'License Plate Adventure!';
       document.getElementById('setup-subtitle').innerText = 'Set up your road trip session to calculate distance points';
@@ -1019,98 +1115,113 @@
       const teaser = card.querySelector('.status-teaser');
       const drawer = card.querySelector('.drawer-container');
       const factsContent = card.querySelector('.facts-content');
-      
+      const loader = card.querySelector('.search-loader');
+
       const wasSpotted = card.getAttribute('data-spotted') === 'true';
       const isChecked = checkbox.checked;
-      
+
+      if (!isChecked && wasSpotted && !fromDB) {
+        // Extra friction: confirm before unspotting a real user tap
+        const stateName = (allPlateData[stateId] && allPlateData[stateId].name) || 'this plate';
+        if (!confirm(`Unspot ${stateName}? You'll lose this fact until you spot it again.`)) {
+          checkbox.checked = true;
+          return;
+        }
+      }
+
+      // Cancel any pending reveal animation so rapid re-toggling can't race and leave stale content
+      if (card._revealTimer) {
+        clearTimeout(card._revealTimer);
+        card._revealTimer = null;
+      }
+
       if (isChecked && !wasSpotted) {
         // --- SPOTTED TRIGGER ---
         card.setAttribute('data-spotted', 'true');
         card.classList.remove('border-l-amber-500');
         card.classList.add('border-l-emerald-500');
-        
+
         badge.innerText = 'Spotted';
         badge.classList.remove('bg-amber-100', 'text-amber-800');
         badge.classList.add('bg-emerald-100', 'text-emerald-800');
-        
+
         label.innerText = 'Spotted!';
         checkbox.closest('div').classList.remove('bg-slate-50', 'border-slate-200');
         checkbox.closest('div').classList.add('bg-emerald-50', 'border-emerald-200');
-        
-        const factCount = (stateFacts[stateId] && stateFacts[stateId].length) || 0;
+
+        const factCount = (allPlateFacts[stateId] && allPlateFacts[stateId].length) || 0;
         teaser.innerHTML = `<span>🔓 ${factCount} secret${factCount !== 1 ? 's' : ''} revealed! (Tap to view)</span>`;
-        
-        // Auto slide open to search record animation
-        document.querySelectorAll('.state-card').forEach(otherCard => {
-          if (otherCard !== card) {
-            const otherDrawer = otherCard.querySelector('.drawer-container');
-            otherDrawer.style.maxHeight = null;
-            otherDrawer.classList.add('opacity-0');
-          }
-        });
-        
+
+        // Auto slide open to search record animation — only for genuine local taps;
+        // a teammate spotting a plate elsewhere shouldn't slam shut a drawer you're reading
+        if (!fromDB) {
+          document.querySelectorAll('.state-card').forEach(otherCard => {
+            if (otherCard !== card) {
+              const otherDrawer = otherCard.querySelector('.drawer-container');
+              otherDrawer.style.maxHeight = null;
+              otherDrawer.classList.add('opacity-0');
+            }
+          });
+        }
+
         drawer.style.maxHeight = "150px";
         drawer.classList.remove('opacity-0');
-        
-        const loaderHtml = `
-          <div id="search-loader-${stateId}" class="flex flex-col items-center justify-center py-6 text-slate-500 select-none animate-pulse">
-            <svg class="animate-spin h-7 w-7 text-amber-500 mb-2" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span class="text-xs font-extrabold tracking-widest text-slate-600 uppercase">SEARCHING SECRETS FOR ${stateId.toUpperCase()}...</span>
-            <span class="text-[10px] text-slate-400 mt-1">Connecting to state record archives...</span>
-          </div>
-        `;
-        
-        const drawerContentWrapper = drawer.querySelector('.pt-4');
-        const originalContent = drawerContentWrapper.innerHTML;
-        drawerContentWrapper.innerHTML = loaderHtml;
-        
-        setTimeout(() => {
-          const loader = document.getElementById(`search-loader-${stateId}`);
-          if (loader) {
-            loader.style.opacity = '0';
-            setTimeout(() => {
-              drawerContentWrapper.innerHTML = originalContent;
-              const newFactsContent = drawerContentWrapper.querySelector('.facts-content');
-              newFactsContent.classList.remove('hidden');
-              drawer.style.maxHeight = "1200px";
-              
-              card.classList.add('scale-[1.01]', 'shadow-md');
-              setTimeout(() => card.classList.remove('scale-[1.01]'), 150);
-            }, 200);
-          }
+
+        factsContent.classList.add('hidden');
+        loader.classList.remove('hidden');
+        loader.classList.add('flex');
+        loader.style.opacity = '1';
+
+        card._revealTimer = setTimeout(() => {
+          loader.classList.remove('flex');
+          loader.classList.add('hidden');
+          factsContent.classList.remove('hidden');
+          drawer.style.maxHeight = "1200px";
+
+          card.classList.add('scale-[1.01]', 'shadow-md');
+          setTimeout(() => card.classList.remove('scale-[1.01]'), 150);
+          card._revealTimer = null;
         }, 1200);
-        
+
       } else if (!isChecked && wasSpotted) {
         // --- UNSPOTTED TRIGGER ---
         card.setAttribute('data-spotted', 'false');
         drawer.style.maxHeight = null;
         drawer.classList.add('opacity-0');
-        
+
         card.classList.remove('border-l-emerald-500');
         card.classList.add('border-l-amber-500');
-        
+
         badge.innerText = 'Unspotted';
         badge.classList.remove('bg-emerald-100', 'text-emerald-800');
         badge.classList.add('bg-amber-100', 'text-amber-800');
-        
+
         label.innerText = 'Spot Plate';
         checkbox.closest('div').classList.remove('bg-emerald-50', 'border-emerald-200');
         checkbox.closest('div').classList.add('bg-slate-50', 'border-slate-200');
-        
+
         teaser.innerHTML = `<span>🔒 Plate unspotted. Sights locked.</span>`;
-        
-        setTimeout(() => {
-          factsContent.classList.add('hidden');
-        }, 400);
+
+        loader.classList.remove('flex');
+        loader.classList.add('hidden');
+        factsContent.classList.add('hidden');
       }
-      
+
       // Sync to Supabase (only on real user taps, not incoming real-time updates)
       if (!fromDB && currentSessionId) {
         if (isChecked && !wasSpotted) {
-          db.from('spotted_plates').insert({ session_id: currentSessionId, state_key: stateId }).then();
+          const insertRow = { session_id: currentSessionId, state_key: stateId };
+          if (stateId.startsWith('wildcard-')) {
+            // Requires `label text` and `fact_index int` columns on spotted_plates (see project notes) —
+            // if they don't exist yet this insert fails silently and the wild card stays local-only for now.
+            insertRow.label = allPlateData[stateId]?.name;
+            insertRow.fact_index = allPlateData[stateId]?.factIndex;
+          }
+          db.from('spotted_plates').insert(insertRow).then(({ error }) => {
+            if (error && stateId.startsWith('wildcard-')) {
+              console.warn('Wild card plate could not be saved to Supabase (missing label/fact_index columns?). It will only persist in this tab.', error);
+            }
+          });
         } else if (!isChecked && wasSpotted) {
           db.from('spotted_plates').delete().eq('session_id', currentSessionId).eq('state_key', stateId).then();
         }
@@ -1119,29 +1230,30 @@
       recalculateGlobalScore();
     }
 
-    // 4. GLOBAL SCORE ACCUMULATION (Summing dynamic state points)
+    // 4. GLOBAL SCORE ACCUMULATION (Summing dynamic state + bonus + wild card points)
     function recalculateGlobalScore() {
       const cards = document.querySelectorAll('.state-card');
       let totalSpottedScore = 0;
       let spottedCount = 0;
-      
+
       cards.forEach(card => {
         const key = card.id.replace('card-', '');
-        const state = stateData[key];
-        
+        const entry = allPlateData[key];
+        if (!entry) return;
+
         if (card.getAttribute('data-spotted') === 'true') {
-          totalSpottedScore += state.currentScore || 0;
-          spottedCount += 1;
+          totalSpottedScore += entry.currentScore || 0;
+          // Wild cards are open-ended, so they add points but don't count toward the fixed checklist total
+          if (!entry.isWildcard) spottedCount += 1;
         }
       });
-      
+
       // Set points displayed in banner
       document.getElementById('team-points-display').innerText = totalSpottedScore;
-      const totalStates = Object.keys(stateData).length;
-      document.getElementById('progress-text-display').innerText = `${spottedCount} of ${totalStates} Spotted`;
+      document.getElementById('progress-text-display').innerText = `${spottedCount} of ${CHECKLIST_TOTAL} Spotted`;
 
       // Update linear progress bar fill
-      const percentage = (spottedCount / totalStates) * 100;
+      const percentage = (spottedCount / CHECKLIST_TOTAL) * 100;
       document.getElementById('progress-bar-fill').style.width = `${percentage}%`;
     }
 
@@ -1158,6 +1270,7 @@
       arkansas: [{ emoji: '🐢', title: 'The Dinosaur With a Lure', teaser: 'This turtle sits on the riverbed and fishes with its own tongue', body: 'The alligator snapping turtle sits motionless on the river bottom with its mouth open, wriggling a pink, worm-like appendage on its tongue. Fish swim in to investigate and are snapped up. It can weigh over 200 lbs, live more than 100 years, and is strong enough to snap a broomstick in half — the largest freshwater turtle in North America.' }],
       colorado: [{ emoji: '🐾', title: 'Running Out of Mountain', teaser: "One of the first documented climate change victims can't climb any higher", body: "The American pika lives in Colorado's high alpine rockfields and cannot survive temperatures above 78°F. As temperatures rise, pikas retreat to higher elevations — but many Colorado populations are already at the summit with nowhere left to go. Several have gone locally extinct in recent decades. The pika is one of the first documented vertebrate casualties of climate change in North America." }],
       connecticut: [{ emoji: '🐋', title: 'The Biggest Brain on Earth', teaser: "Connecticut's state animal has a 17-pound brain", body: "The sperm whale — Connecticut's state animal, chosen to honor the state's whaling history — has the largest brain of any animal that has ever existed: up to 17 pounds. Its sonar clicks, used to hunt squid a mile underwater in total darkness, are the loudest biological sound ever recorded at around 230 decibels — louder than a rocket launch heard at close range." }],
+      dc: [{ emoji: '🦫', title: 'Two Centuries Later', teaser: "A beaver showed up in the nation's capital after a 200-year absence", body: "Beavers were trapped out of the Washington, D.C. area by the early 1800s. In 2013, a beaver was spotted swimming in the Constitution Gardens pond near the National Mall — the first confirmed sighting in the district in roughly two centuries. It had likely traveled miles through Rock Creek's waterways to get there, and biologists now track a small but growing population reclaiming the city's streams." }],
       delaware: [{ emoji: '🦀', title: "The World's Largest Crab Spawn", teaser: 'A million horseshoe crabs emerge here on a single spring tide', body: 'Every May, up to 1 million horseshoe crabs emerge from Delaware Bay to spawn — one of the largest single-species gatherings on Earth. The event is so ancient and reliable that the red knot shorebird evolved its entire migration around it: flying from South America to the Arctic, stopping in Delaware specifically to gorge on the eggs and double its body weight in two weeks.' }],
       georgia: [{ emoji: '🐢', title: 'The Magnetic GPS', teaser: "This sea turtle reads Earth's magnetic field like a home address", body: "Female loggerhead sea turtles navigate thousands of miles of open ocean using Earth's magnetic field not just as a compass, but as a precise coordinate system. When it is time to nest, they return to the exact beach where they hatched, homing in on its unique magnetic signature. Georgia's barrier islands are among the most important loggerhead nesting beaches on the East Coast." }],
       hawaii: [{ emoji: '🪿', title: 'The Goose That Forgot How to Swim', teaser: "Hawaii's state bird evolved from Canada geese and lost its webbing", body: "About 500,000 years ago, Canada geese blown off course landed on Hawaii and never left. Their descendants gradually lost most of their toe webbing (useless on lava fields), grew stronger legs for walking on rough terrain, and became the nene. By 1952, only 30 remained due to hunting and invasive predators. A captive breeding program has since restored the population to roughly 2,500." }],
@@ -1199,7 +1312,189 @@
       wyoming: [{ emoji: '🦌', title: 'Running From a Ghost', teaser: 'This animal evolved to outrun a predator extinct for 10,000 years', body: "The pronghorn antelope can sustain 55 mph for miles — the second fastest land animal on Earth. No predator alive today can catch it. Scientists believe the pronghorn evolved this speed to escape the American cheetah (Miracinonyx trumani), a cheetah-like cat that roamed North America until going extinct roughly 10,000 years ago. The pronghorn is running from a memory — maintaining extreme metabolic hardware for a threat that no longer exists." }]
     };
 
+    // --- BONUS PLATE CATEGORIES (fixed flat score — no US state of origin to compute distance/scarcity from) ---
+    const BONUS_POINTS = 15;
+    const bonusData = {
+      diplomatic: { name: "Diplomatic Plate", currentScore: BONUS_POINTS, isBonus: true },
+      canadian:   { name: "Canadian Plate",   currentScore: BONUS_POINTS, isBonus: true },
+      consular:   { name: "Consular Plate",   currentScore: BONUS_POINTS, isBonus: true }
+    };
+
+    const bonusFacts = {
+      diplomatic: [{ emoji: '🐼', title: 'Panda Diplomacy', teaser: 'China has used live pandas as a diplomatic gift since the 1950s', body: "Since 1957, China has gifted or loaned giant pandas to foreign countries as a deliberate act of diplomacy, timed to coincide with warming relations — the practice even has a name, panda diplomacy. Modern loans function as 10-year agreements with strict terms: host zoos pay large annual fees, and any cub born abroad is automatically considered Chinese property, typically sent to China within a few years." }],
+      canadian:   [{ emoji: '🦫', title: "Canada's Engineer", teaser: 'The beaver is a legally recognized national symbol of Canada', body: "The beaver was declared an official symbol of Canadian sovereignty by an Act of Parliament in 1975, alongside its long history on the country's first postage stamp. Beavers can gnaw down a tree over a foot thick in a single night, and their dams can grow so large they're visible from space — one in Alberta stretches over 2,800 feet, more than twice the length of the Hoover Dam." }],
+      consular:   [{ emoji: '🐦', title: 'The Original Diplomatic Pouch', teaser: 'Carrier pigeons once carried encrypted government messages between capitals', body: "Long before consular couriers and diplomatic pouches, governments relied on trained carrier pigeons to move sensitive messages between cities. Reuters news service was founded in 1850 using a fleet of over 45 pigeons to relay stock prices between Brussels and Aachen faster than the telegraph then reached. Pigeons can find their way home from over 1,100 miles away using a combination of magnetic fields, sun position, and smell." }]
+    };
+
+    // Generic fact pool for Wild Card plates — unusual or custom plates the checklist doesn't cover
+    const wildcardFacts = [
+      { emoji: '🐙', title: 'Three Hearts, Blue Blood', teaser: 'An octopus has copper-based blood instead of iron', body: "Octopuses have three hearts and blue blood — their oxygen-carrying protein, hemocyanin, is copper-based instead of iron-based like hemoglobin, which turns their blood blue and works better in cold, low-oxygen water. Two hearts pump blood to the gills, and the third pumps it to the rest of the body; that third heart actually stops beating when the octopus swims, which is why they prefer crawling." },
+      { emoji: '🦒', title: 'Same Bones, More Neck', teaser: 'A giraffe neck has the same number of neck bones as a human', body: "Despite being up to six feet long, a giraffe's neck contains exactly seven vertebrae — the same number found in nearly every mammal, including humans and mice. Giraffes simply have much longer individual vertebrae. Their hearts have to generate roughly double human blood pressure to pump blood all the way up to the brain." },
+      { emoji: '🐌', title: 'A Built-In Raincoat', teaser: 'Snails can seal themselves inside their shell for years', body: "Many land snails can secrete a dried mucus membrane called an epiphragm to seal the opening of their shell during drought or cold, entering a dormant state called estivation. Some desert snail species have been recorded surviving sealed inside their shells for several years before rehydrating and reviving." },
+      { emoji: '🦥', title: 'Too Slow to Sweat', teaser: 'A sloth’s fur hosts its own tiny ecosystem of algae and moths', body: "A three-toed sloth moves so slowly that algae grows directly in grooves on its fur, tinting it green, while specialized moths live their entire life cycle nowhere else. The sloth's slow metabolism is so extreme it can take a month to digest a single meal, and it descends to the ground to defecate only about once a week." },
+      { emoji: '🐝', title: 'Waggle Dance GPS', teaser: 'Honeybees communicate exact locations with a figure-eight dance', body: "Foraging honeybees perform a waggle dance inside the hive to tell other bees the precise direction and distance of a food source relative to the sun, encoded in the angle and duration of the waggle run. It's one of the only known symbolic 'languages' outside of humans that communicates information about a location the sender has seen but the receiver has not." },
+      { emoji: '🦔', title: 'Self-Anointing', teaser: 'Hedgehogs bite unfamiliar objects and lick their own spines', body: "When hedgehogs encounter a new or strong-smelling object, they sometimes chew it into a frothy saliva and spread it across their own spines in a behavior called self-anointing. Scientists still aren't fully certain why they do it, though camouflage and parasite deterrence are leading theories." },
+      { emoji: '🦭', title: 'Sleeping Underwater', teaser: 'Some seals can sleep with only half their brain at a time', body: "Fur seals can engage in unihemispheric slow-wave sleep, resting one half of their brain while the other stays alert, allowing them to keep one eye open and continue swimming while effectively asleep. The behavior is thought to help them watch for predators or keep swimming during long ocean crossings." },
+      { emoji: '🦩', title: 'Born Gray', teaser: 'Flamingos aren’t naturally pink — their food makes them that color', body: "Flamingo chicks hatch gray, and adults only turn pink because of pigments called carotenoids in the algae and brine shrimp they eat. A flamingo on a carotenoid-poor diet in captivity will gradually fade back toward white or pale gray, which is why zoos supplement their feed to keep them vivid." },
+      { emoji: '🐿️', title: 'A Thousand Hidden Snacks', teaser: 'Squirrels use decoy burying to fool watching rivals', body: "Squirrels that notice another animal watching them bury a nut will sometimes dig a fake hole and pretend to bury it there instead, then sneak the real nut away elsewhere — a deceptive behavior once thought unique to more socially complex animals. A single squirrel may cache thousands of nuts each autumn and relies on smell as much as memory to relocate them." },
+      { emoji: '🦎', title: 'Regrown, Not Repaired', teaser: 'A gecko can regrow a tail, but it never matches the original', body: "When threatened, many gecko species can voluntarily detach their tail through a process called autotomy, and the still-twitching tail distracts predators while the gecko escapes. The regrown replacement is cartilage rather than bone and is usually shorter, differently colored, and never quite as functional as the original." },
+      { emoji: '🐡', title: 'A Living Sand Sculpture', teaser: 'Male pufferfish carve giant geometric circles to attract mates', body: "Male white-spotted pufferfish spend up to a week carving elaborate circular geometric patterns into the seafloor sand using only their fins, some over six feet across. Females judge the fineness of the ridges before choosing where to lay their eggs — finer sand grains, moved into place by the pattern, better protect the eggs from ocean currents." },
+      { emoji: '🦦', title: 'Holding Hands to Sleep', teaser: 'Sea otters link paws in groups so they don’t drift apart', body: "Sea otters often sleep floating on their backs in groups called rafts, and will hold each other's paws or wrap themselves in kelp to keep from drifting apart on the current overnight. Mothers frequently wrap their pups in kelp specifically to anchor them while they dive for food." },
+      { emoji: '🦜', title: 'Naming Their Own Kids', teaser: 'Parrot parents may give chicks a name-like signature call', body: "Wild parakeet parents develop a unique signature contact call for each chick before it can fly, and other parakeets learn to use that call to address that specific individual — functioning similarly to a name. Chicks that hear their signature call respond specifically to it, distinguishing it from calls used for their siblings." },
+      { emoji: '🐢', title: 'Breathing Through the Wrong End', teaser: 'Some turtles can breathe through their rear end underwater', body: "Several freshwater turtle species, including the Australian Fitzroy River turtle, can absorb oxygen directly from water through specialized tissue in their cloaca, letting them stay submerged for extended periods without surfacing. Some species get the majority of their oxygen this way during cold-water hibernation, when their metabolism slows dramatically." },
+      { emoji: '🐘', title: 'Feeling Through the Feet', teaser: 'Elephants sense distant rumbles as vibrations through the ground', body: "Elephants can detect low-frequency rumbles from other elephants more than six miles away by sensing ground vibrations through sensitive tissue in their feet and trunk, a sense called seismic hearing. Herds have been observed reacting to warning calls or distress rumbles from relatives long before any sound would be audible to a human ear." }
+    ];
+
+    // Combined lookup tables so score/toggle logic works uniformly across states, bonus categories, and wild cards.
+    // Object.assign copies references, so mutating stateData[key].currentScore (via calculatePointsMatrix) is
+    // automatically reflected here too. allPlateFacts is rebuilt by renderStateCards()/createWildcardCard()
+    // every time, since which facts are "active" depends on the current session's theme/facts_status.
+    let allPlateData  = Object.assign({}, stateData, bonusData);
+    let allPlateFacts = {};
+    const CHECKLIST_TOTAL = Object.keys(stateData).length + Object.keys(bonusData).length;
+
+    // Returns the facts array that should be shown for a given plate key right now:
+    // the session's generated facts once ready, a "brewing" placeholder while pending,
+    // or the fallback (default hand-written) facts otherwise (no theme, or generation failed).
+    function getPlateFacts(key, fallbackFacts) {
+      const status = currentSessionData?.facts_status;
+      if (status === 'ready' && currentSessionData.custom_facts?.[key]?.length) {
+        return currentSessionData.custom_facts[key];
+      }
+      if (status === 'pending') {
+        return [{
+          emoji: '⏳',
+          title: 'Facts Brewing...',
+          teaser: `Generating "${currentSessionData.fact_theme}" facts for this trip`,
+          body: `We're cooking up a custom "${currentSessionData.fact_theme}" fact for this plate — it'll appear automatically for everyone once it's ready.`
+        }];
+      }
+      return fallbackFacts;
+    }
+
+    // Same idea as getPlateFacts, but for the shared wildcard pool (free-text plates).
+    function getWildcardFactsPool() {
+      const status = currentSessionData?.facts_status;
+      if (status === 'ready' && currentSessionData.custom_facts?.wildcard_pool?.length) {
+        return currentSessionData.custom_facts.wildcard_pool;
+      }
+      if (status === 'pending') {
+        return [{
+          emoji: '⏳',
+          title: 'Facts Brewing...',
+          teaser: `Generating "${currentSessionData.fact_theme}" facts for this trip`,
+          body: `We're cooking up custom "${currentSessionData.fact_theme}" facts for wild card plates — it'll appear automatically for everyone once it's ready.`
+        }];
+      }
+      return wildcardFacts;
+    }
+
+    // Rebuilds every card using the session's currently active fact source, then restores
+    // spotted/checked state from the DB. Called on session entry and whenever facts_status changes
+    // (theme finishes generating, errors out, or gets edited in settings).
+    async function refreshAllFacts() {
+      const pool = getWildcardFactsPool();
+      for (const [key, entry] of Object.entries(allPlateData)) {
+        if (entry.isWildcard) {
+          allPlateFacts[key] = [pool[entry.factIndex % pool.length]];
+        }
+      }
+      renderStateCards();
+      if (currentSessionId) await loadSpottedPlates(currentSessionId);
+    }
+
     // 5. CARD RENDERING
+
+    // Builds the fact-panel markup shared by every card type (state, bonus, wild card)
+    function buildFactsHtml(key, facts, displayName) {
+      const searchTopic = (currentSessionData?.facts_status === 'ready' || currentSessionData?.facts_status === 'pending')
+        && currentSessionData.fact_theme ? currentSessionData.fact_theme : 'animal facts';
+      return facts.map((fact, i) => `
+        <div class="fact-panel bg-white/60 border border-slate-100 rounded-2xl overflow-hidden cursor-pointer hover:bg-slate-50/80 transition-all" onclick="event.stopPropagation(); toggleSubDrawer('${key}', ${i})">
+          <div class="flex items-center justify-between px-4 py-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <span class="text-lg select-none shrink-0">${fact.emoji}</span>
+              <div class="min-w-0">
+                <h4 class="text-xs font-black text-slate-700 truncate">${fact.title}</h4>
+                <p class="text-[10px] text-slate-400 font-medium truncate">${fact.teaser}</p>
+              </div>
+            </div>
+            <svg class="sub-chevron w-4 h-4 text-slate-400 shrink-0 transition-transform duration-300 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+            </svg>
+          </div>
+          <div class="sub-drawer drawer-transition overflow-hidden max-h-0 opacity-0">
+            <div class="px-4 pb-4 pt-1 border-t border-slate-100">
+              <div class="bg-white/70 border border-slate-100 rounded-xl p-3">
+                <p class="text-xs text-slate-600 leading-relaxed">${fact.body}</p>
+              </div>
+              <a href="https://www.google.com/search?q=${encodeURIComponent('fascinating ' + searchTopic + ' ' + displayName)}"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 onclick="event.stopPropagation()"
+                 class="mt-3 flex items-center justify-center gap-1.5 pt-3 border-t border-slate-100 text-[10px] font-black text-amber-500 hover:text-amber-400 tracking-widest uppercase transition-colors select-none">
+                🔍 More ${displayName} ${searchTopic}
+              </a>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Builds the full card markup shared by every card type (state, bonus, wild card)
+    function buildCardHtml(key, displayName, facts, opts = {}) {
+      const pointsBadge = opts.pointsBadge || '+0 pts';
+      const factsHtml = buildFactsHtml(key, facts, displayName);
+      const removeBtnHtml = opts.removable ? `
+        <button onclick="event.stopPropagation(); removeWildcardPlate('${key}')" class="text-slate-300 hover:text-red-500 transition-colors shrink-0" title="Remove this wild card entry">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>` : '';
+
+      return `
+        <div id="card-${key}"
+             class="state-card mb-3 bg-white rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-amber-500 overflow-hidden transition-all duration-200 cursor-pointer select-none"
+             data-spotted="false"
+             data-state-name="${displayName}"
+             onclick="toggleCardDrawer('${key}')">
+
+          <div class="px-4 pt-4 pb-3">
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex-1 min-w-0">
+                <h2 class="text-sm font-black text-slate-800 leading-tight">${displayName}</h2>
+                <p class="status-teaser text-[10px] text-slate-400 mt-0.5 font-medium">🔒 Plate unspotted. Sights locked.</p>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="points-badge px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 shrink-0">${pointsBadge}</span>
+                <span class="status-badge text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Unspotted</span>
+                ${removeBtnHtml}
+              </div>
+            </div>
+            <div class="flex items-center bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 mt-3 gap-3" onclick="event.stopPropagation()">
+              <input type="checkbox" id="check-${key}" onchange="toggleLicensePlate('${key}')" class="w-4 h-4 rounded accent-emerald-500 cursor-pointer shrink-0">
+              <label for="check-${key}" class="text-xs font-bold text-slate-600 cursor-pointer select-none">Spot Plate</label>
+            </div>
+          </div>
+
+          <div class="drawer-container drawer-transition overflow-hidden border-t border-slate-100 opacity-0 max-h-0">
+            <div class="pt-4 px-4 pb-4">
+              <div class="search-loader hidden flex-col items-center justify-center py-6 text-slate-500 select-none animate-pulse">
+                <svg class="animate-spin h-7 w-7 text-amber-500 mb-2" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-xs font-extrabold tracking-widest text-slate-600 uppercase">SEARCHING SECRETS FOR ${key.toUpperCase()}...</span>
+                <span class="text-[10px] text-slate-400 mt-1">Connecting to state record archives...</span>
+              </div>
+              <div class="facts-content hidden space-y-2">
+                ${factsHtml}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      `;
+    }
+
     function renderStateCards() {
       const container = document.getElementById('states-container');
       container.innerHTML = '';
@@ -1211,79 +1506,97 @@
       });
 
       for (const [key, state] of sortedEntries) {
-        const facts = (stateFacts[key] && stateFacts[key].length > 0) ? stateFacts[key] : [
+        const defaultFacts = (stateFacts[key] && stateFacts[key].length > 0) ? stateFacts[key] : [
           { emoji: '🔒', title: 'Coming Soon', teaser: 'Spot this plate to unlock a secret', body: 'A bizarre animal fact about this state is coming soon!' },
         ];
-
-        const factsHtml = facts.map((fact, i) => `
-          <div class="fact-panel bg-white/60 border border-slate-100 rounded-2xl overflow-hidden cursor-pointer hover:bg-slate-50/80 transition-all" onclick="event.stopPropagation(); toggleSubDrawer('${key}', ${i})">
-            <div class="flex items-center justify-between px-4 py-3">
-              <div class="flex items-center gap-3 min-w-0">
-                <span class="text-lg select-none shrink-0">${fact.emoji}</span>
-                <div class="min-w-0">
-                  <h4 class="text-xs font-black text-slate-700 truncate">${fact.title}</h4>
-                  <p class="text-[10px] text-slate-400 font-medium truncate">${fact.teaser}</p>
-                </div>
-              </div>
-              <svg class="sub-chevron w-4 h-4 text-slate-400 shrink-0 transition-transform duration-300 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
-              </svg>
-            </div>
-            <div class="sub-drawer drawer-transition overflow-hidden max-h-0 opacity-0">
-              <div class="px-4 pb-4 pt-1 border-t border-slate-100">
-                <div class="bg-white/70 border border-slate-100 rounded-xl p-3">
-                  <p class="text-xs text-slate-600 leading-relaxed">${fact.body}</p>
-                </div>
-                <a href="https://www.google.com/search?q=${encodeURIComponent('fascinating unusual animal facts ' + state.name)}"
-                   target="_blank"
-                   rel="noopener noreferrer"
-                   onclick="event.stopPropagation()"
-                   class="mt-3 flex items-center justify-center gap-1.5 pt-3 border-t border-slate-100 text-[10px] font-black text-amber-500 hover:text-amber-400 tracking-widest uppercase transition-colors select-none">
-                  🔍 More ${state.name} animal facts
-                </a>
-              </div>
-            </div>
-          </div>
-        `).join('');
-
-        container.insertAdjacentHTML('beforeend', `
-          <div id="card-${key}"
-               class="state-card mb-3 bg-white rounded-3xl border border-slate-100 shadow-sm border-l-4 border-l-amber-500 overflow-hidden transition-all duration-200 cursor-pointer select-none"
-               data-spotted="false"
-               data-state-name="${state.name}"
-               onclick="toggleCardDrawer('${key}')">
-
-            <div class="px-4 pt-4 pb-3">
-              <div class="flex items-start justify-between gap-2">
-                <div class="flex-1 min-w-0">
-                  <h2 class="text-sm font-black text-slate-800 leading-tight">${state.name}</h2>
-                  <p class="status-teaser text-[10px] text-slate-400 mt-0.5 font-medium">🔒 Plate unspotted. Sights locked.</p>
-                </div>
-                <div class="flex items-center gap-1.5 shrink-0">
-                  <span class="points-badge px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 shrink-0">+0 pts</span>
-                  <span class="status-badge text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Unspotted</span>
-                </div>
-              </div>
-              <div class="flex items-center bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 mt-3 gap-3" onclick="event.stopPropagation()">
-                <input type="checkbox" id="check-${key}" onchange="toggleLicensePlate('${key}')" class="w-4 h-4 rounded accent-emerald-500 cursor-pointer shrink-0">
-                <label for="check-${key}" class="text-xs font-bold text-slate-600 cursor-pointer select-none">Spot Plate</label>
-              </div>
-            </div>
-
-            <div class="drawer-container drawer-transition overflow-hidden border-t border-slate-100 opacity-0 max-h-0">
-              <div class="pt-4 px-4 pb-4">
-                <div class="facts-content hidden space-y-2">
-                  ${factsHtml}
-                </div>
-              </div>
-            </div>
-
-          </div>
-        `);
+        const facts = getPlateFacts(key, defaultFacts);
+        allPlateFacts[key] = facts;
+        container.insertAdjacentHTML('beforeend', buildCardHtml(key, state.name, facts));
       }
+
+      // --- BONUS PLATES SECTION ---
+      container.insertAdjacentHTML('beforeend', `
+        <div class="flex items-center gap-2 my-5 select-none">
+          <div class="h-px flex-1 bg-slate-200"></div>
+          <span class="text-[10px] font-black tracking-widest text-amber-500 uppercase">🌟 Bonus Plates</span>
+          <div class="h-px flex-1 bg-slate-200"></div>
+        </div>
+      `);
+
+      for (const [key, entry] of Object.entries(bonusData)) {
+        const defaultFacts = bonusFacts[key] || [];
+        const facts = getPlateFacts(key, defaultFacts);
+        allPlateFacts[key] = facts;
+        container.insertAdjacentHTML('beforeend', buildCardHtml(key, entry.name, facts, { pointsBadge: `+${entry.currentScore} pts` }));
+      }
+
+      // Re-render any wild card entries already registered this session (e.g. restored from Supabase)
+      for (const [key, entry] of Object.entries(allPlateData)) {
+        if (entry.isWildcard) {
+          container.insertAdjacentHTML('beforeend', buildCardHtml(key, entry.name, allPlateFacts[key] || [], { pointsBadge: `+${entry.currentScore} pts`, removable: true }));
+        }
+      }
+
+      // --- ADD WILD CARD ROW ---
+      container.insertAdjacentHTML('beforeend', `
+        <div id="wildcard-add-row" class="mb-3 bg-white rounded-3xl border border-dashed border-amber-300 p-4">
+          <p class="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-2">+ Add Wild Card Plate</p>
+          <div class="flex gap-2">
+            <input type="text" id="wildcard-input" placeholder="What did you spot? (e.g. Amish buggy plate)" class="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-amber-500">
+            <button onclick="addWildcardPlate()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black rounded-xl shrink-0 transition-colors">Add</button>
+          </div>
+        </div>
+      `);
 
       calculatePointsMatrix(currentOrigin);
       applyFilters();
+    }
+
+    // 5b. WILD CARD PLATES (free-text, flat bonus score, random fact from the shared pool)
+    function createWildcardCard(key, label, factIndex) {
+      allPlateData[key]  = { name: label, currentScore: BONUS_POINTS, isBonus: true, isWildcard: true, factIndex };
+      const pool = getWildcardFactsPool();
+      allPlateFacts[key] = [pool[factIndex % pool.length]];
+
+      const addRow = document.getElementById('wildcard-add-row');
+      const cardHtml = buildCardHtml(key, label, allPlateFacts[key], { pointsBadge: `+${BONUS_POINTS} pts`, removable: true });
+      addRow.insertAdjacentHTML('beforebegin', cardHtml);
+    }
+
+    function addWildcardPlate() {
+      const input = document.getElementById('wildcard-input');
+      const label = input.value.trim();
+      if (!label) {
+        alert('Type in what you spotted first!');
+        return;
+      }
+      const factIndex = Math.floor(Math.random() * getWildcardFactsPool().length);
+      const key = `wildcard-${Date.now()}`;
+      createWildcardCard(key, label, factIndex);
+      input.value = '';
+
+      document.getElementById(`check-${key}`).checked = true;
+      toggleLicensePlate(key);
+      applyFilters();
+    }
+
+    async function removeWildcardPlate(key) {
+      if (!confirm('Remove this wild card entry?')) return;
+      const card = document.getElementById(`card-${key}`);
+      if (card) card.remove();
+      delete allPlateData[key];
+      delete allPlateFacts[key];
+      if (currentSessionId) {
+        await db.from('spotted_plates').delete().eq('session_id', currentSessionId).eq('state_key', key);
+      }
+      recalculateGlobalScore();
+    }
+
+    // Recreates a wild card card from a restored DB row (initial load or a teammate's real-time insert)
+    function ensureWildcardCard(stateKey, label, factIndex) {
+      if (document.getElementById(`check-${stateKey}`)) return;
+      const idx = (typeof factIndex === 'number' && wildcardFacts[factIndex]) ? factIndex : 0;
+      createWildcardCard(stateKey, label || 'Wild Card Plate', idx);
     }
 
     // 6. NAVIGATION FILTER ACTIONS
